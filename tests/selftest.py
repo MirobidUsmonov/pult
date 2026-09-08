@@ -347,6 +347,59 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                     check("protokol orqali sichqoncha", worst <= 2, detail)
                 wi.move_to(*saved)
 
+                # -- ko'p ekranli xatti-harakat
+                if len(mons) >= 2:
+                    a, b = mons[0], mons[1]
+                    await ws.send_json({"t": "view", "on": True, "monitor": a["index"]})
+                    await asyncio.sleep(0.4)
+
+                    # Kursorni ataylab BOSHQA ekranga qo'yamiz va kichkina
+                    # harakat yuboramiz: kursor ko'rilayotgan ekranga
+                    # qaytishi, lekin chekkaga sakramasligi kerak
+                    wi.move_to(b["x"] + b["w"] // 2, b["y"] + b["h"] // 2)
+                    await asyncio.sleep(0.1)
+                    await ws.send_json({"t": "mouse", "a": "moveby", "dx": 3, "dy": 0})
+                    await asyncio.sleep(0.35)
+                    gx, gy = wi.cursor_pos()
+                    inside = (a["x"] <= gx < a["x"] + a["w"]) and (a["y"] <= gy < a["y"] + a["h"])
+                    centered = abs(gx - (a["x"] + a["w"] // 2)) < 40
+                    check("boshqa ekranda qolgan kursor qaytariladi", inside and centered,
+                          f"kursor ({gx},{gy}), chekkaga sakramadi" if centered
+                          else f"kursor ({gx},{gy}) - chekkaga sakradi")
+
+                    # Katta harakat ham ekrandan chiqarib yubormasin
+                    for _ in range(6):
+                        await ws.send_json({"t": "mouse", "a": "moveby", "dx": 900, "dy": 900})
+                        await asyncio.sleep(0.06)
+                    gx, gy = wi.cursor_pos()
+                    inside = (a["x"] <= gx < a["x"] + a["w"]) and (a["y"] <= gy < a["y"] + a["h"])
+                    check("trackpad ko'rilayotgan ekrandan chiqmaydi", inside,
+                          f"kursor ({gx},{gy}), {a['index'] + 1}-ekran "
+                          f"x:{a['x']}..{a['x'] + a['w']}")
+
+                    # Ekran almashtirilsa kursor o'sha ekranga o'tsin
+                    await ws.send_json({"t": "view", "on": True, "monitor": b["index"]})
+                    await asyncio.sleep(0.6)
+                    gx, gy = wi.cursor_pos()
+                    moved = (b["x"] <= gx < b["x"] + b["w"]) and (b["y"] <= gy < b["y"] + b["h"])
+                    check("ekran almashtirilsa kursor ko'chadi", moved, f"kursor ({gx},{gy})")
+                    await ws.send_json({"t": "view", "on": True, "monitor": a["index"]})
+                    await asyncio.sleep(0.5)
+                else:
+                    check("ko'p ekranli xatti-harakat", None, "ikkinchi ekran yo'q")
+
+                # -- juda kichik harakatlar yo'qolmasligi
+                wi.move_to(mons[0]["x"] + 600, mons[0]["y"] + 400)
+                await asyncio.sleep(0.15)
+                bx, by = wi.cursor_pos()
+                for _ in range(20):
+                    await ws.send_json({"t": "mouse", "a": "moveby", "dx": 0.3, "dy": 0})
+                    await asyncio.sleep(0.03)
+                await asyncio.sleep(0.2)
+                ax, _ay = wi.cursor_pos()
+                check("sekin harakat yo'qolmaydi", abs((ax - bx) - 6) <= 2,
+                      f"20 x 0.3px = 6px kutildi, {ax - bx}px bo'ldi")
+
                 # -- xatolar
                 async def next_error():
                     end2 = time.monotonic() + 4

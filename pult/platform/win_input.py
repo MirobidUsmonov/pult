@@ -269,18 +269,28 @@ def move_by_raw(dx: int, dy: int) -> None:
     _send([_mouse(int(dx), int(dy), 0, MOUSEEVENTF_MOVE)])
 
 
-def move_by(dx: float, dy: float) -> None:
+def move_by(dx: float, dy: float, bounds: tuple[int, int, int, int] | None = None) -> None:
     """Aniq nisbiy harakat: kursorni o'qib, mutlaq qilib qaytib qo'yamiz.
 
     Tizimning tezlashuvini butunlay chetlab o'tadi, shuning uchun telefondagi
     barmoq harakati har kompyuterda bir xil masofa beradi. Sezgirlikni
     boshqarishni yuqori qatlamga qoldiramiz.
+
+    bounds - (x, y, kenglik, balandlik). Berilsa kursor shu to'rtburchakdan
+    chiqmaydi. Bu ko'p ekranli kompyuterda muhim: telefonda bitta ekran
+    ko'rinib turganda kursor ikkinchisiga o'tib ketsa, foydalanuvchi
+    ko'rmayotgan joyga bosib qo'yadi.
     """
     x, y = cursor_pos()
-    vx, vy, vw, vh = virtual_screen()
-    nx = max(vx, min(vx + vw - 1, int(round(x + dx))))
-    ny = max(vy, min(vy + vh - 1, int(round(y + dy))))
+    bx, by, bw, bh = bounds if bounds else virtual_screen()
+    nx = max(bx, min(bx + bw - 1, int(round(x + dx))))
+    ny = max(by, min(by + bh - 1, int(round(y + dy))))
     move_to(nx, ny)
+
+
+def contains(bounds: tuple[int, int, int, int], x: int, y: int) -> bool:
+    bx, by, bw, bh = bounds
+    return bx <= x < bx + bw and by <= y < by + bh
 
 
 def cursor_pos() -> tuple[int, int]:

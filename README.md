@@ -85,6 +85,16 @@ relative to your finger. **Direct** — you tap where you want to click.
 | Three-finger swipe up | Task View |
 | Three-finger swipe down | Show desktop |
 
+### Several monitors
+
+The pointer is confined to the monitor you are looking at. On a multi-monitor
+machine this matters: in trackpad mode a click carries no coordinates, it lands
+wherever the cursor happens to be — so a cursor left behind on another screen
+means you click on a screen you cannot see. Switching monitors in the app moves
+the cursor across with you, and if it is somewhere else when you start moving,
+it is brought to the middle of the visible screen rather than snapped to the
+nearest edge.
+
 ## Fitting a desktop onto a phone
 
 A 16:9 desktop shown upright on a portrait phone becomes a thin strip — small

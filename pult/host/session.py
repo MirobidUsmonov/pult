@@ -72,6 +72,10 @@ class ControllerSession:
         # uchun sessiya yopilganda hammasini qo'yib yuboramiz.
         self._held_keys: set[str] = set()
 
+        # Nisbiy harakatning yaxlitlanmagan qoldig'i
+        self._frac_x = 0.0
+        self._frac_y = 0.0
+
     # -- hayot sikli -------------------------------------------------------
 
     async def start(self) -> None:
@@ -176,8 +180,10 @@ class ControllerSession:
         """Oqimni yoqish/o'chirish va sozlamalarini o'zgartirish."""
         want = bool(msg.get("on", True))
         s = self.ctx.cfg.stream
-        if "monitor" in msg:
+        monitor_changed = False
+        if "monitor" in msg and int(msg["monitor"]) != s.monitor:
             s.monitor = int(msg["monitor"])
+            monitor_changed = True
         if "fps" in msg:
             s.fps = max(1, min(60, int(msg["fps"])))
         if "width" in msg:
@@ -189,6 +195,9 @@ class ControllerSession:
 
         was = self.viewing
         self.viewing = want
+        if monitor_changed:
+            self._frac_x = self._frac_y = 0.0
+            self.ctx.ensure_cursor_on_monitor()
         await self.ctx.sync_capture(changed=(want and was))
         if want:
             # Kodek satri aniqlanmaguncha kutamiz: brauzer dekoderni
@@ -207,6 +216,21 @@ class ControllerSession:
         py = mon["y"] + y * (mon["h"] - 1)
         return int(round(px)), int(round(py))
 
+    def _accumulate(self, dx: float, dy: float) -> tuple[int, int]:
+        """Kasr qismini keyingi harakatga saqlab qoladi.
+
+        Kursor faqat butun pikselga qo'yiladi. Barmoq sekin surilganda
+        har bir qadam yarim pikseldan kichik bo'lib, yaxlitlashda nolga
+        aylanib ketardi - kursor umuman qimirlamasdi. Qoldiqni to'plab
+        borganimiz uchun sekin harakat ham silliq chiqadi.
+        """
+        dx += self._frac_x
+        dy += self._frac_y
+        ix, iy = int(dx), int(dy)
+        self._frac_x = dx - ix
+        self._frac_y = dy - iy
+        return ix, iy
+
     def _check_input(self) -> None:
         if not self.ctx.cfg.security.allow_input:
             raise PermissionError("kiritish sozlamalarda o'chirilgan")
@@ -218,7 +242,14 @@ class ControllerSession:
         if action == "move":
             wi.move_to(*self._to_desktop(float(msg["x"]), float(msg["y"])))
         elif action == "moveby":
-            wi.move_by(float(msg.get("dx", 0)), float(msg.get("dy", 0)))
+            ix, iy = self._accumulate(float(msg.get("dx", 0)), float(msg.get("dy", 0)))
+            if ix or iy:
+                # Kursor boshqa ekranda qolgan bo'lsa avval shu ekranga
+                # olib kelamiz. Shunchaki chegaraga qisib qo'yilsa,
+                # kichkina harakatdan ham kursor uzoq chekkaga sakrab
+                # tushardi - kutilmagan va noqulay.
+                self.ctx.ensure_cursor_on_monitor()
+                wi.move_by(ix, iy, bounds=self.ctx.monitor_bounds())
         elif action in ("down", "up", "click", "dblclick"):
             pos = None
             if "x" in msg and "y" in msg:
@@ -301,6 +332,27 @@ class HostContext:
             if m["index"] == idx:
                 return m
         return self.monitors[0] if self.monitors else {"x": 0, "y": 0, "w": 1920, "h": 1080}
+
+    def monitor_bounds(self) -> tuple[int, int, int, int]:
+        m = self.monitor()
+        return m["x"], m["y"], m["w"], m["h"]
+
+    def ensure_cursor_on_monitor(self) -> None:
+        """Kursorni ko'rinib turgan ekranga olib keladi.
+
+        Ekran almashtirilganda kursor eskisida qolib ketardi va trackpad
+        bilan bosilgan joy foydalanuvchi ko'rmayotgan ekranga tushardi.
+        Kursor allaqachon kerakli ekranda bo'lsa tegilmaydi - bekordan
+        bekorga sakratib yubormaymiz.
+        """
+        if not self.cfg.security.allow_input:
+            return
+        bounds = self.monitor_bounds()
+        x, y = self.input.cursor_pos()
+        if self.input.contains(bounds, x, y):
+            return
+        bx, by, bw, bh = bounds
+        self.input.move_to(bx + bw // 2, by + bh // 2)
 
     def hello_message(self) -> dict:
         return {
