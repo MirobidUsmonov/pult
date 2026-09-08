@@ -50,9 +50,25 @@ class HostServer:
     def __init__(self, cfg: Config, caps: ff.Capabilities) -> None:
         self.cfg = cfg
         self.ctx = HostContext(cfg, caps)
-        self.app = web.Application()
+        self.app = web.Application(middlewares=[self._no_cache])
         self._runner: web.AppRunner | None = None
         self._setup_routes()
+
+    @staticmethod
+    @web.middleware
+    async def _no_cache(request: web.Request, handler):
+        """Veb-fayllar keshlanmasin.
+
+        Dastur yangilanganda telefon eski sahifani keshdan olib qolardi va
+        yangi imkoniyatlar ko'rinmasdi - buni tushunish qiyin, chunki
+        tashqaridan hech qanday xato ko'rinmaydi. Fayllar mahalliy
+        tarmoqdan kelgani uchun keshdan yutuq deyarli yo'q.
+        """
+        response = await handler(request)
+        if request.path.startswith("/ws"):
+            return response
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+        return response
 
     def _setup_routes(self) -> None:
         root = web_root()
