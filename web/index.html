@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d10">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Pult</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="screen" width="16" height="9"></canvas>
+  <div id="placeholder">
+    <div class="ph-icon">🖥</div>
+    <div class="ph-text" id="phText">Ulanmoqda…</div>
+    <button class="ph-btn" id="phBtn" hidden>Boshlash</button>
+  </div>
+  <div id="cursorHint"></div>
+</div>
+
+<header id="bar">
+  <span class="dot" id="dot"></span>
+  <span id="hostName">Pult</span>
+  <span class="spacer"></span>
+  <span id="stats" class="muted"></span>
+  <button id="btnSettings" class="icon" aria-label="Sozlamalar">⚙</button>
+</header>
+
+<footer id="toolbar">
+  <button id="btnMode"  class="tool" title="Boshqaruv usuli"><span>🖱</span><i>trackpad</i></button>
+  <button id="btnLeft"  class="tool wide">chap</button>
+  <button id="btnRight" class="tool wide">o‘ng</button>
+  <button id="btnKeys"  class="tool" title="Klaviatura"><span>⌨</span><i>klav</i></button>
+</footer>
+
+<!-- Maxsus klavishlar. Telefon klaviaturasi bu tugmalarni bermaydi,
+     shuning uchun alohida qator kerak. -->
+<div id="keyrow" hidden>
+  <div class="krow">
+    <button class="k mod" data-mod="ctrl">Ctrl</button>
+    <button class="k mod" data-mod="alt">Alt</button>
+    <button class="k mod" data-mod="shift">Shift</button>
+    <button class="k mod" data-mod="win">Win</button>
+    <button class="k" data-key="Escape">Esc</button>
+    <button class="k" data-key="Tab">Tab</button>
+    <button class="k" data-key="Delete">Del</button>
+  </div>
+  <div class="krow">
+    <button class="k" data-key="ArrowLeft">←</button>
+    <button class="k" data-key="ArrowDown">↓</button>
+    <button class="k" data-key="ArrowUp">↑</button>
+    <button class="k" data-key="ArrowRight">→</button>
+    <button class="k" data-key="Home">Home</button>
+    <button class="k" data-key="End">End</button>
+    <button class="k" data-key="Enter">⏎</button>
+  </div>
+  <div class="krow" id="fnrow"></div>
+  <input id="typer" type="text" autocomplete="off" autocorrect="off"
+         autocapitalize="off" spellcheck="false" placeholder="matn yozing…">
+</div>
+
+<div id="sheet" hidden>
+  <div class="sheet-inner">
+    <div class="sheet-head">
+      <strong id="sheetHost">Kompyuter</strong>
+      <button class="icon" id="btnCloseSheet">✕</button>
+    </div>
+
+    <section>
+      <h3>Ekran</h3>
+      <div class="row" id="monitorRow"></div>
+    </section>
+
+    <section>
+      <h3>Sifat</h3>
+      <label class="line">
+        <span>Ruxsat</span>
+        <select id="selWidth">
+          <option value="854">854 — tejamkor</option>
+          <option value="1280" selected>1280 — o‘rtacha</option>
+          <option value="1600">1600 — yaxshi</option>
+          <option value="0">To‘liq — eng aniq</option>
+        </select>
+      </label>
+      <label class="line">
+        <span>Kadr/s</span>
+        <select id="selFps">
+          <option value="15">15</option>
+          <option value="24">24</option>
+          <option value="30" selected>30</option>
+          <option value="60">60</option>
+        </select>
+      </label>
+      <label class="line">
+        <span>Tezlik</span>
+        <select id="selBitrate">
+          <option value="1500">1.5 Mbit — mobil internet</option>
+          <option value="4000" selected>4 Mbit — odatiy</option>
+          <option value="8000">8 Mbit — Wi-Fi</option>
+          <option value="16000">16 Mbit — eng yaxshi</option>
+        </select>
+      </label>
+      <label class="line">
+        <span>Kursor ko‘rinsin</span>
+        <input type="checkbox" id="chkCursor" checked>
+      </label>
+      <label class="line">
+        <span>Sezgirlik</span>
+        <input type="range" id="rngSens" min="0.5" max="4" step="0.1" value="1.6">
+      </label>
+    </section>
+
+    <section>
+      <h3>Buyruqlar</h3>
+      <div class="row" id="cmdRow"></div>
+      <label class="line">
+        <span>Ochish</span>
+        <input type="text" id="runCmd" placeholder="masalan: notepad">
+      </label>
+      <button class="btn" id="btnRun">Ishga tushirish</button>
+    </section>
+
+    <section>
+      <h3>Ulanish</h3>
+      <div class="kv"><span>Holat</span><b id="infoState">—</b></div>
+      <div class="kv"><span>Kodlagich</span><b id="infoEnc">—</b></div>
+      <div class="kv"><span>O‘lcham</span><b id="infoSize">—</b></div>
+      <div class="kv"><span>Kechikish</span><b id="infoRtt">—</b></div>
+      <button class="btn ghost" id="btnForget">Kalitni o‘chirish</button>
+    </section>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="app.js" type="module"></script>
+</body>
+</html>

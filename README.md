@@ -1,0 +1,190 @@
+<div align="center">
+
+<img src="web/icons/icon-192.png" width="88" alt="Pult">
+
+# Pult
+
+**Control your computer from your phone — live screen, real keyboard and mouse.**
+
+No account, no cloud, no third-party server. Your phone talks to your PC directly.
+
+</div>
+
+---
+
+## What it is
+
+Pult turns any phone into a full remote control for your computer. Open a link,
+and you get your desktop streaming live at 30–60 fps with a trackpad, a real
+keyboard, and system controls. It runs quietly in the tray — no terminal window,
+no visible process.
+
+It is built for the case where existing tools are more than you need: you don't
+want to create an account somewhere, you don't want your screen going through
+someone else's relay, and you'd rather have something small you can read the
+source of.
+
+## How it works
+
+```
+   ┌──────────────────────────────┐
+   │  PC agent (tray, no console) │
+   │                              │
+   │  screen ──► ffmpeg ──► H.264 │
+   │  input  ◄── SendInput        │
+   └────────────┬─────────────────┘
+                │  HTTPS + WebSocket
+                │
+   ┌────────────▼─────────────────┐
+   │  Phone (web app / PWA)       │
+   │  H.264 ──► WebCodecs ──► screen
+   │  touch  ──► mouse + keyboard │
+   └──────────────────────────────┘
+```
+
+The screen is captured with the GPU (Desktop Duplication API), encoded to H.264
+by the GPU encoder, and sent over a WebSocket. The phone decodes it with
+**WebCodecs**, which hands the stream to the phone's hardware decoder. That is
+why it stays smooth without draining the battery.
+
+On an NVIDIA GTX 1650 capturing 1080p at 30 fps, the agent uses about **3% CPU**.
+
+## Features
+
+- **Live screen** — H.264, 15–60 fps, adjustable quality, multi-monitor
+- **Real input** — absolute and trackpad pointer modes, full keyboard, scroll,
+  drag, right-click, middle-click, back/forward buttons
+- **Any keyboard layout** — text is injected as Unicode, so Uzbek, Russian,
+  emoji all work regardless of the layout set on the PC
+- **System commands** — lock, sleep, shut down, turn the display off, launch
+  a program
+- **Hardware encoder auto-detection** — NVENC → Quick Sync → AMF → Media
+  Foundation → x264 fallback, so it works on any machine
+- **Idle-quiet** — capture only runs while someone is watching; nothing is
+  encoded when the app is closed
+- **Installable** — add to home screen and it opens like a native app
+
+## Requirements
+
+- Windows 10/11 (Linux and macOS backends are stubbed, not finished)
+- Python 3.10+
+- [ffmpeg](https://ffmpeg.org/download.html) on `PATH`
+- A phone with Chrome (Android) or Safari on iOS 17+
+
+## Install
+
+```bash
+git clone https://github.com/<you>/pult
+cd pult
+pip install -r requirements.txt
+python tests/selftest.py        # verify it works on your machine
+```
+
+Start it:
+
+```bash
+pythonw -m pult                 # tray, no console window
+python -m pult --console        # with logs in the terminal
+```
+
+Right-click the tray icon → **Telefonni ulash (QR)** → scan the code with your
+phone.
+
+### Start automatically at login
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\autostart.ps1
+```
+
+This registers a Task Scheduler entry that runs **at logon**, as your own user.
+That is deliberate and not an oversight: on Windows, injecting mouse and
+keyboard events requires running inside the interactive user session. Installed
+as a service it would sit in session 0 and be unable to touch the desktop at
+all — a common way to get this wrong.
+
+## Why HTTPS with a self-signed certificate
+
+Browsers only expose video decoding (WebCodecs), service workers and wake-lock
+in a **secure context**. `localhost` counts; a LAN address over plain HTTP does
+not. Serving `http://192.168.x.x` leaves `VideoDecoder` undefined and nothing
+renders.
+
+So the agent generates a self-signed certificate on first run and serves HTTPS.
+Your phone shows a warning once — **Advanced → Proceed** — and after that the
+page is a secure context and everything works. The certificate is stored in the
+config directory and regenerated automatically if your LAN address changes.
+
+If you put the agent behind a tunnel that terminates TLS for you (Cloudflare
+Tunnel, Tailscale Serve, a reverse proxy), set `"tls": "off"` in the config and
+let the tunnel provide the real certificate — then there is no warning at all.
+
+## Security
+
+The link contains a token that grants **full control of the machine**. Treat it
+like a password.
+
+- Every connection must present the token; there is no anonymous access
+- Tokens are compared in constant time
+- `/api/info` returns only the machine name without a token, so a phone can see
+  which of its saved computers are online without exposing anything else
+- Keyboard and mouse injection (`security.allow_input`) and system commands
+  (`security.allow_commands`) can each be disabled in the config
+- To revoke access, delete `token` from the config and restart — a new one is
+  generated
+
+Do not expose the port straight to the internet. Use a tunnel with its own
+authentication in front of it.
+
+## Configuration
+
+`%APPDATA%\Pult\config.json` on Windows, `~/.config/pult/config.json` elsewhere.
+Set `PULT_CONFIG_DIR` to move it (useful for portable installs).
+
+```jsonc
+{
+  "host_name": "workstation",
+  "port": 8787,
+  "tls": "auto",              // "off" behind a TLS-terminating tunnel
+  "stream": {
+    "monitor": 0,
+    "fps": 30,
+    "width": 1280,            // 0 = native resolution
+    "bitrate_kbps": 4000,
+    "cursor": true,
+    "encoder": null           // null = auto-detect
+  },
+  "security": { "allow_input": true, "allow_commands": true }
+}
+```
+
+## Project layout
+
+```
+pult/
+├── platform/      OS-specific: input injection, screen capture, system commands
+├── host/          server, session protocol, pairing page
+├── capture.py     ffmpeg process, H.264 access-unit splitting
+├── config.py      settings
+├── tls.py         self-signed certificate
+└── tray.py        tray icon, background mode
+web/               phone app (PWA)
+tests/selftest.py  end-to-end verification
+```
+
+The protocol is transport-agnostic on purpose: a *controller* is anything that
+speaks it — the phone, another program, or an AI agent. Adding a new kind of
+client does not require touching the host.
+
+## Roadmap
+
+- [ ] Hub mode — one phone, several computers, no port forwarding on either end
+- [ ] Telegram notification when the machine comes online
+- [ ] Single `.exe` build (PyInstaller), so Python is not required
+- [ ] Android APK wrapper around the web app
+- [ ] AI controller — describe what you want, it drives the machine
+- [ ] Linux and macOS capture/input backends
+- [ ] UI translations (currently Uzbek)
+
+## License
+
+MIT
