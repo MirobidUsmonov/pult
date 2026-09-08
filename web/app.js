@@ -285,6 +285,8 @@ link.onJson = (msg) => {
       $("chkFollow").checked = msg.stream.follow_cursor;
     }
     buildMonitors(host.monitors);
+    buildMonbar();
+    flashMonbar();
     buildCommands(host.commands || []);
     applyPrefsToUi();
     if (!decoder.supported) {
@@ -300,6 +302,8 @@ link.onJson = (msg) => {
     if (typeof msg.monitor === "number" && msg.monitor !== currentMonitor) {
       currentMonitor = msg.monitor;
       if (host) buildMonitors(host.monitors);
+      buildMonbar();
+      flashMonbar();
       resetView();
     }
     $("infoEnc").textContent = msg.encoder || "—";
@@ -398,9 +402,16 @@ function pointToNorm(cx, cy) {
   return {
     x: clamp(x, 0, 1),
     y: clamp(y, 0, 1),
-    // Barmoq videodan tashqarida (qora chekkada) tegdimi - bosishni
-    // chekkaga siljitib yuborgandan ko'ra e'tiborsiz qoldirgan yaxshi.
+    // Xom qiymat: 0..1 dan tashqarida bo'lsa barmoq videoning o'zida
+    // emas, yon-veridagi qora chekkada. Qirqilmagani kerak, chunki
+    // chekka atigi bir necha piksel bo'lishi mumkin.
+    rx: x,
+    ry: y,
+    // Bosish uchun kichik tolerans qoldiramiz: chekkaga bir-ikki
+    // piksel chiqib ketgan tegish bekor ketmasin.
     inside: x >= -0.02 && x <= 1.02 && y >= -0.02 && y <= 1.02,
+    // Ekran almashtirgich uchun esa aniq chegara kerak.
+    outside: x < 0 || x > 1 || y < 0 || y > 1,
   };
 }
 
@@ -487,6 +498,7 @@ const MOVE_START_PX = 5;    // barmoq titrashi harakatga aylanmasligi uchun
 const SWITCH_START_PX = 45; // uch barmoq: oyna almashtirish boshlanishi
 const SWITCH_STEP_PX = 75;  // har shuncha surilganda - keyingi oyna
 const SWITCH_VERT_PX = 70;  // uch barmoq: yuqoriga/pastga
+const EDGE_SWIPE_PX = 55;   // qora chekkada surish: ekran almashtirish
 
 const touch = {
   pts: new Map(),
@@ -553,6 +565,79 @@ function endDrag() {
   touch.dragging = false;
 }
 
+/* -- ekran ko'rsatkichi va almashtirgichi -------------------------------- */
+
+/** Ekranlar jismoniy joylashuvi bo'yicha, chapdan o'ngga.
+ *
+ * Ro'yxatdagi tartib qurilma raqamiga asoslangan va u jismoniy
+ * joylashuvga mos kelmasligi mumkin. "O'ngdagi ekran" deganda esa
+ * foydalanuvchi haqiqiy joylashuvni nazarda tutadi.
+ */
+function monitorsByPosition() {
+  return [...((host && host.monitors) || [])].sort((a, b) => a.x - b.x || a.y - b.y);
+}
+
+function buildMonbar() {
+  const bar = $("monbar");
+  const list = monitorsByPosition();
+  bar.hidden = list.length < 2;
+  if (bar.hidden) return;
+  bar.innerHTML = "";
+  for (const m of list) {
+    const d = document.createElement("div");
+    d.className = "md" + (m.index === currentMonitor ? " on" : "");
+    d.dataset.index = String(m.index);
+    bar.appendChild(d);
+  }
+}
+
+let monbarTimer = null;
+function flashMonbar() {
+  const bar = $("monbar");
+  if (bar.hidden) return;
+  bar.classList.add("show");
+  clearTimeout(monbarTimer);
+  monbarTimer = setTimeout(() => bar.classList.remove("show"), 1600);
+}
+
+function selectMonitor(index) {
+  if (index === currentMonitor) return;
+  currentMonitor = index;
+  prefs.monitor = index;
+  savePrefs();
+  buildMonbar();
+  if (host) buildMonitors(host.monitors);
+  resetView();
+  link.send({ t: "view", on: true, monitor: index });
+  flashMonbar();
+  navigator.vibrate?.(12);
+  toast(`${index + 1}-ekran`);
+}
+
+/** Yonidagi ekranga o'tadi. dir: +1 o'ngdagi, -1 chapdagi. */
+function switchMonitorBy(dir) {
+  const list = monitorsByPosition();
+  if (list.length < 2) return false;
+  const at = list.findIndex((m) => m.index === currentMonitor);
+  const next = list[at + dir];
+  if (!next) return false;      // chekkadagi ekran - aylanmaymiz
+  selectMonitor(next.index);
+  return true;
+}
+
+/** Qora chekkadagi tegish qaysi nuqtaga tushdi. */
+function monbarDotAt(x, y) {
+  const bar = $("monbar");
+  if (bar.hidden) return null;
+  const r = bar.getBoundingClientRect();
+  if (x < r.left - 12 || x > r.right + 12 || y < r.top - 12 || y > r.bottom + 12) return null;
+  for (const d of bar.children) {
+    const dr = d.getBoundingClientRect();
+    if (x >= dr.left - 9 && x <= dr.right + 9) return Number(d.dataset.index);
+  }
+  return null;
+}
+
 /* -- uch barmoq: oyna almashtirish -------------------------------------- */
 
 function switchStep(dir) {
@@ -594,6 +679,19 @@ stage.addEventListener("touchstart", (e) => {
     touch.moved = false;
     touch.movedEnough = false;
     touch.gesture = "point";
+
+    // Videodan tashqaridagi qora chekka - ekran almashtirgich.
+    // Sozlamalarga kirmasdan bitta surish bilan qo'shni ekranga
+    // o'tish uchun.
+    // Ko'rsatkichning o'zi ham hisoblanadi: u qora chekkadan bir oz
+    // balandroq va pastki qismi videoga tegib turadi.
+    const n0 = pointToNorm(p.x, p.y);
+    const onBar = monbarDotAt(p.x, p.y) !== null;
+    if ((onBar || (n0 && n0.outside)) && monitorsByPosition().length > 1) {
+      touch.gesture = "edge";
+      flashMonbar();
+      return;
+    }
 
     touch.isSecondTap = !!(
       touch.lastTap &&
@@ -653,6 +751,19 @@ stage.addEventListener("touchmove", (e) => {
     }
   }
   const pts = [...touch.pts.values()];
+
+  if (touch.gesture === "edge" && pts.length === 1) {
+    const p = pts[0];
+    const dx = p.x - touch.start.x;
+    const dy = p.y - touch.start.y;
+    touch.last = { ...p };
+    if (Math.abs(dx) > EDGE_SWIPE_PX && Math.abs(dx) > Math.abs(dy)) {
+      touch.moved = true;
+      switchMonitorBy(dx > 0 ? 1 : -1);
+      touch.gesture = "done";      // bitta surishda bitta ekran
+    }
+    return;
+  }
 
   if (touch.gesture === "point" && pts.length === 1) {
     const p = pts[0];
@@ -798,6 +909,19 @@ stage.addEventListener("touchend", (e) => {
     if (remaining === 0) {
       endSwitch();
       touch.gesture = null;
+      touch.lastTap = null;
+    }
+    return;
+  }
+
+  if (touch.gesture === "edge" || touch.gesture === "done") {
+    if (remaining === 0) {
+      if (!touch.moved && touch.last) {
+        const idx = monbarDotAt(touch.last.x, touch.last.y);
+        if (idx !== null) selectMonitor(idx);
+      }
+      touch.gesture = null;
+      touch.moved = false;
       touch.lastTap = null;
     }
     return;
@@ -1045,14 +1169,7 @@ function buildMonitors(monitors) {
     const b = document.createElement("button");
     b.className = "btn" + (currentMonitor === m.index ? " on" : "");
     b.textContent = `${m.index + 1}-ekran · ${m.w}×${m.h}${m.primary ? " ★" : ""}`;
-    b.onclick = () => {
-      currentMonitor = m.index;
-      prefs.monitor = m.index;
-      savePrefs();
-      resetView();
-      buildMonitors(monitors);
-      link.send({ t: "view", on: true, monitor: m.index });
-    };
+    b.onclick = () => selectMonitor(m.index);
     row.appendChild(b);
   });
 }

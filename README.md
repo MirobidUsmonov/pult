@@ -85,8 +85,17 @@ relative to your finger. **Direct** — you tap where you want to click.
 | **Three-finger swipe left/right** | **Switch windows — Alt held down, follows the swipe** |
 | Three-finger swipe up | Task View |
 | Three-finger swipe down | Show desktop |
+| Swipe the black band above the picture | Switch monitors |
 
 ### Several monitors
+
+A 16:9 desktop never fills a phone exactly, so there is always a thin black
+band above and below the picture. That band is the screen switcher: swipe it
+left or right to move to the monitor on that side, and a small indicator sitting
+in it shows which screen you are on — tap a dot to jump straight to it. The
+indicator fades down to barely visible so it does not sit on top of the picture.
+Screens are ordered the way they physically sit on your desk, not by their
+system numbers, so "swipe right" means the screen actually on the right.
 
 Move the cursor past the edge of one screen and it crosses to the next, and the
 view follows it — so the cursor is never on a screen you cannot see. This
