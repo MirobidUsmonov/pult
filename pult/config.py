@@ -12,18 +12,42 @@ import os
 import platform
 import secrets
 import socket
+import sys
 import uuid
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, get_type_hints
 
 
+def program_dir() -> Path:
+    """Dastur joylashgan papka (.exe bo'lsa uning yonidagi)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parents[1]
+
+
 def config_dir() -> Path:
-    # PULT_CONFIG_DIR - sozlamalarni boshqa joyga olish uchun. Testlarga va
-    # dasturni USB'dan ko'chma ishlatishga kerak bo'ladi.
+    """Sozlamalar papkasi.
+
+    Uchta yo'l, shu tartibda:
+
+    1. PULT_CONFIG_DIR muhit o'zgaruvchisi - testlar va maxsus holatlar uchun.
+    2. Dastur yonidagi "data" papkasi, agar u mavjud bo'lsa - "ko'chma rejim".
+       Uni qo'lda yaratasiz va dastur o'sha yerga yozadi. USB'dan ishlatish
+       uchun qulay, lekin asosiy foydasi boshqa: dastur turli usullar bilan
+       (terminaldan, vazifa rejalashtiruvchisidan, boshqa dastur ichidan)
+       ishga tushirilganda ham bitta joyni ko'radi. Ba'zi muhitlarda
+       AppData boshqa papkaga yo'naltiriladi va shunda ikkita alohida
+       sozlama paydo bo'lib, kalitlar mos kelmay qoladi.
+    3. Tizimning odatiy joyi.
+    """
     override = os.environ.get("PULT_CONFIG_DIR")
     if override:
         return Path(override)
+
+    portable = program_dir() / "data"
+    if portable.is_dir():
+        return portable
 
     system = platform.system()
     if system == "Windows":

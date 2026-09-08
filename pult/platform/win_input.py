@@ -126,7 +126,18 @@ def _send(events: Sequence[INPUT]) -> None:
     arr = (INPUT * n)(*events)
     sent = user32.SendInput(n, arr, ctypes.sizeof(INPUT))
     if sent != n:
-        raise ctypes.WinError(ctypes.get_last_error())
+        err = ctypes.get_last_error()
+        if err == 5:  # ERROR_ACCESS_DENIED
+            # Windows'ning UIPI himoyasi: administrator huquqi bilan
+            # ochilgan oyna faol bo'lsa, oddiy huquqli dastur unga
+            # kiritish yubora olmaydi. Kursor ekranda harakatlanadi,
+            # lekin bosishlar o'sha oynaga yetib bormaydi.
+            raise PermissionError(
+                "Faol oyna administrator huquqi bilan ishlayapti - Windows "
+                "unga kiritishga ruxsat bermaydi. Boshqa oynani tanlang yoki "
+                "Pult'ni ham administrator sifatida ishga tushiring."
+            )
+        raise ctypes.WinError(err)
 
 
 def _mouse(dx: int, dy: int, data: int, flags: int) -> INPUT:

@@ -10,3 +10,4 @@ dist/
 *.h264
 *.log
 .DS_Store
+data/

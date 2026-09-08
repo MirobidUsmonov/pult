@@ -52,6 +52,11 @@ def build_server(cfg: cfgmod.Config) -> HostServer:
         )
     caps = ff.probe(path)
     enc = ff.pick_encoder(caps, cfg.stream.encoder)
+    # Sozlama papkasini yozib qo'yamiz: dastur turli usullar bilan ishga
+    # tushirilganda (terminal, vazifa rejalashtiruvchisi, boshqa dastur
+    # ichidan) papka boshqacha bo'lib qolishi mumkin va shunda kalitlar
+    # mos kelmaydi. Bu qatorni ko'rib darrov tushunish oson.
+    log.info("sozlamalar: %s (kompyuter %s)", cfgmod.config_dir(), cfg.host_id[:8])
     log.info("ffmpeg %s, kodlagich: %s", caps.version, enc["label"])
     return HostServer(cfg, caps)
 

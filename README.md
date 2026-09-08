@@ -165,7 +165,16 @@ authentication in front of it.
 ## Configuration
 
 `%APPDATA%\Pult\config.json` on Windows, `~/.config/pult/config.json` elsewhere.
-Set `PULT_CONFIG_DIR` to move it (useful for portable installs).
+
+**Portable mode:** create a folder named `data` next to the program and Pult
+will keep everything there instead. Besides USB installs, this solves a real
+problem: if the agent is launched in different ways — from a shell, from Task
+Scheduler, from inside another application — the OS may hand each one a
+different `AppData`, and you end up with two configs and two different tokens,
+so the link on your phone stops working. A fixed `data` folder removes the
+ambiguity. `PULT_CONFIG_DIR` overrides both.
+
+The config directory in use is written to the log on every start.
 
 ```jsonc
 {
