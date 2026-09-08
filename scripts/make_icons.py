@@ -83,6 +83,14 @@ def main() -> int:
         path = os.path.join(OUT, name)
         draw_icon(size, maskable).save(path)
         print(f"  {name}  {size}x{size}  {os.path.getsize(path)} bayt")
+
+    # Windows .exe uchun: bitta faylda bir nechta o'lcham bo'lishi kerak,
+    # aks holda kichik joylarda (masalan vazifalar panelida) xunuk chiqadi.
+    ico = os.path.join(OUT, "pult.ico")
+    sizes = [16, 24, 32, 48, 64, 128, 256]
+    draw_icon(256).save(ico, format="ICO", sizes=[(s, s) for s in sizes])
+    print(f"  pult.ico  {','.join(map(str, sizes))}  {os.path.getsize(ico)} bayt")
+
     print("ikonkalar tayyor:", OUT)
     return 0
 

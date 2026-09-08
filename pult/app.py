@@ -63,6 +63,13 @@ def pair_url(cfg: cfgmod.Config) -> str:
 
 
 def phone_url(cfg: cfgmod.Config) -> str:
+    """Telefonga beriladigan havola.
+
+    Tunnel sozlangan bo'lsa tashqi manzil afzal: u har joydan ishlaydi
+    va haqiqiy sertifikatga ega.
+    """
+    if cfg.public_url:
+        return f"{cfg.public_url.rstrip('/')}/#k={cfg.token}"
     scheme = "http" if cfg.tls == "off" else "https"
     return f"{cfgmod.local_addresses(cfg.port, scheme)[0]}/#k={cfg.token}"
 
@@ -91,11 +98,31 @@ def connection_info(cfg: cfgmod.Config) -> list[str]:
     return lines
 
 
+def start_notifier(cfg: cfgmod.Config) -> asyncio.Task | None:
+    """Kompyuter onlayn bo'lganini xabar qilishni fon vazifasi sifatida
+    boshlaydi.
+
+    Alohida vazifa bo'lgani muhim: internet hali yo'q bo'lsa xabarnoma
+    uni kutadi, lekin server bu vaqtda allaqachon ishlab turadi -
+    mahalliy tarmoqdan ulanish uchun internet shart emas.
+    """
+    from . import notify
+
+    if not (cfg.telegram.enabled and cfg.telegram.on_start):
+        return None
+    return asyncio.create_task(
+        notify.announce_online(cfg, phone_url(cfg)), name="pult-notify"
+    )
+
+
 async def serve(cfg: cfgmod.Config, stop: asyncio.Event) -> None:
     """Serverni ishga tushirib, to'xtatish signaligacha kutadi."""
     server = build_server(cfg)
     await server.start()
+    notifier = start_notifier(cfg)
     try:
         await stop.wait()
     finally:
+        if notifier:
+            notifier.cancel()
         await server.stop()

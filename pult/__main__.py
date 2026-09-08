@@ -67,10 +67,35 @@ def main() -> int:
                         help="HTTPS o'rniga oddiy HTTP (faqat tunnel orqasida)")
     parser.add_argument("--show", action="store_true",
                         help="ulanish manzilini ko'rsatib chiqish")
+    parser.add_argument("--telegram", metavar="TOKEN",
+                        help="Telegram xabarnomasini sozlash (@BotFather bergan token)")
+    parser.add_argument("--test-notify", action="store_true",
+                        help="Telegram xabarini hozir yuborib ko'rish")
     args = parser.parse_args()
 
-    appmod.setup_logging(console=args.console or args.show)
+    appmod.setup_logging(console=args.console or args.show or bool(args.telegram))
     cfg = _apply_args(cfgmod.load(), args)
+
+    if args.telegram:
+        from . import notify
+
+        return asyncio.run(notify.setup_interactive(args.telegram))
+
+    if args.test_notify:
+        from . import notify
+
+        if not cfg.telegram.chat_id:
+            print("Telegram sozlanmagan. Avval:  python -m pult --telegram <TOKEN>")
+            return 1
+
+        async def _test() -> int:
+            tg = notify.Telegram(cfg.telegram.bot_token, cfg.telegram.chat_id)
+            url = appmod.phone_url(cfg)
+            await tg.send(notify.online_message(cfg, url), button=("Boshqarish", url))
+            print("Xabar yuborildi.")
+            return 0
+
+        return asyncio.run(_test())
 
     if args.show:
         print("\n".join(appmod.connection_info(cfg)))

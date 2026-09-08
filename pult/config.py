@@ -94,6 +94,9 @@ class Config:
     # "off"  - oddiy HTTP. Faqat oldida HTTPS beruvchi tunnel yoki proksi
     #          turgan bo'lsa ishlating.
     tls: str = "auto"
+    # Tashqi manzil (tunnel bergan). Berilgan bo'lsa xabarnomalarda va
+    # ulash sahifasida mahalliy IP o'rniga shu ishlatiladi.
+    public_url: str = ""
     ffmpeg_path: str | None = None
     stream: StreamSettings = field(default_factory=StreamSettings)
     hub: HubSettings = field(default_factory=HubSettings)

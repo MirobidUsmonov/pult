@@ -111,11 +111,14 @@ class TrayApp:
         server = appmod.build_server(self.cfg)
         await server.start()
         self.ready.set()
+        notifier = appmod.start_notifier(self.cfg)
         log.info("Pult treyda ishlayapti - %s", appmod.phone_url(self.cfg))
         try:
             assert self.stop_event
             await self.stop_event.wait()
         finally:
+            if notifier:
+                notifier.cancel()
             await server.stop()
 
     # -- menyu -------------------------------------------------------------

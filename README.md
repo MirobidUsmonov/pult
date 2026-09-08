@@ -90,10 +90,37 @@ python -m pult --console        # with logs in the terminal
 Right-click the tray icon → **Telefonni ulash (QR)** → scan the code with your
 phone.
 
+### Build a standalone `.exe`
+
+```bash
+python scripts/build.py                 # dist/Pult.exe, ~20 MB
+python scripts/build.py --with-ffmpeg   # bundle ffmpeg too, ~100 MB
+```
+
+The result is a single file with no console window. Python is not required on
+the machine that runs it.
+
+### Get a message when the computer comes online
+
+Create a bot with [@BotFather](https://t.me/BotFather), then:
+
+```bash
+python -m pult --telegram <BOT_TOKEN>
+```
+
+Send `/start` to your bot and the agent picks up the chat id by itself — you
+never have to look it up. From then on, every time the machine boots and
+reaches the internet, you get a message with the link.
+
+```bash
+python -m pult --test-notify    # send one now to check
+```
+
 ### Start automatically at login
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\autostart.ps1
+powershell -ExecutionPolicy Bypass -File scripts\autostart.ps1 -Remove
 ```
 
 This registers a Task Scheduler entry that runs **at logon**, as your own user.
@@ -177,13 +204,15 @@ client does not require touching the host.
 
 ## Roadmap
 
+- [x] Telegram notification when the machine comes online
+- [x] Single `.exe` build (PyInstaller), so Python is not required
+- [x] Start at login
+- [ ] Tunnel support — a real certificate and access from anywhere
 - [ ] Hub mode — one phone, several computers, no port forwarding on either end
-- [ ] Telegram notification when the machine comes online
-- [ ] Single `.exe` build (PyInstaller), so Python is not required
 - [ ] Android APK wrapper around the web app
 - [ ] AI controller — describe what you want, it drives the machine
 - [ ] Linux and macOS capture/input backends
-- [ ] UI translations (currently Uzbek)
+- [ ] UI translations (the phone interface is currently Uzbek)
 
 ## License
 
