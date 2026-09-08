@@ -286,7 +286,7 @@ link.onJson = (msg) => {
     }
     buildMonitors(host.monitors);
     buildMonbar();
-    flashMonbar();
+    buildToolMid();
     buildCommands(host.commands || []);
     applyPrefsToUi();
     if (!decoder.supported) {
@@ -303,6 +303,7 @@ link.onJson = (msg) => {
       currentMonitor = msg.monitor;
       if (host) buildMonitors(host.monitors);
       buildMonbar();
+      buildToolMid();
       flashMonbar();
       resetView();
     }
@@ -577,6 +578,57 @@ function monitorsByPosition() {
   return [...((host && host.monitors) || [])].sort((a, b) => a.x - b.x || a.y - b.y);
 }
 
+/** Ekranning foydalanuvchi ko'radigan raqami: chapdan o'ngga 1, 2, 3...
+ *
+ * Tizimdagi raqam qurilma nomiga bog'liq va jismoniy joylashuvga mos
+ * kelmasligi mumkin. Foydalanuvchi esa "chapdagi" va "o'ngdagi" deb
+ * o'ylaydi, shuning uchun hamma joyda shu raqam ko'rsatiladi.
+ */
+function monitorLabel(index) {
+  const at = monitorsByPosition().findIndex((m) => m.index === index);
+  return (at < 0 ? index : at) + 1;
+}
+
+function makeTool(icon, caption, onTap, active) {
+  const b = document.createElement("button");
+  b.className = "tool" + (active ? " active" : "");
+  const sp = document.createElement("span");
+  sp.textContent = icon;
+  const i = document.createElement("i");
+  i.textContent = caption;
+  b.append(sp, i);
+  b.onclick = onTap;
+  return b;
+}
+
+/** Pastki qatorning o'rtasi: ekranlar yoki sichqoncha tugmalari.
+ *
+ * Ekran almashtirish uchun avval videoning yon-veridagi qora chekkani
+ * surish kerak edi, lekin u telefonda atigi 20 chogli piksel bo'lib
+ * chiqdi - barmoq bilan aniq tegib bo'lmaydi. Tugmalar ishonchli.
+ * Chekkani surish ham qoldirildi, u endi qo'shimcha yo'l.
+ */
+function buildToolMid() {
+  const mid = $("toolMid");
+  mid.innerHTML = "";
+  const list = monitorsByPosition();
+  if (list.length >= 2) {
+    list.forEach((m, i) => {
+      mid.appendChild(makeTool(
+        String(i + 1), "ekran",
+        () => selectMonitor(m.index),
+        m.index === currentMonitor,
+      ));
+    });
+  } else {
+    // Bitta ekranda almashtiradigan narsa yo'q - sichqoncha tugmalari
+    mid.appendChild(makeTool("🖯", "chap",
+      () => link.send({ t: "mouse", a: "click", b: "left" })));
+    mid.appendChild(makeTool("🖱", "o‘ng",
+      () => link.send({ t: "mouse", a: "click", b: "right" })));
+  }
+}
+
 function buildMonbar() {
   const bar = $("monbar");
   const list = monitorsByPosition();
@@ -606,12 +658,13 @@ function selectMonitor(index) {
   prefs.monitor = index;
   savePrefs();
   buildMonbar();
+  buildToolMid();
   if (host) buildMonitors(host.monitors);
   resetView();
   link.send({ t: "view", on: true, monitor: index });
   flashMonbar();
   navigator.vibrate?.(12);
-  toast(`${index + 1}-ekran`);
+  toast(`${monitorLabel(index)}-ekran`);
 }
 
 /** Yonidagi ekranga o'tadi. dir: +1 o'ngdagi, -1 chapdagi. */
@@ -997,8 +1050,6 @@ stage.addEventListener("wheel", (e) => {
 
 /* -------------------------------------------------------- tugmalar */
 
-$("btnLeft").addEventListener("click", () => link.send({ t: "mouse", a: "click", b: "left" }));
-$("btnRight").addEventListener("click", () => link.send({ t: "mouse", a: "click", b: "right" }));
 $("btnDouble").addEventListener("click", () => {
   link.send({ t: "mouse", a: "dblclick", b: "left" });
   navigator.vibrate?.(10);
@@ -1165,10 +1216,10 @@ typer.addEventListener("keydown", (e) => {
 function buildMonitors(monitors) {
   const row = $("monitorRow");
   row.innerHTML = "";
-  (monitors || []).forEach((m) => {
+  monitorsByPosition().forEach((m, i) => {
     const b = document.createElement("button");
     b.className = "btn" + (currentMonitor === m.index ? " on" : "");
-    b.textContent = `${m.index + 1}-ekran · ${m.w}×${m.h}${m.primary ? " ★" : ""}`;
+    b.textContent = `${i + 1}-ekran · ${m.w}×${m.h}${m.primary ? " ★" : ""}`;
     b.onclick = () => selectMonitor(m.index);
     row.appendChild(b);
   });

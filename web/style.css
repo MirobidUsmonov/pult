@@ -148,9 +148,9 @@ html, body {
   background: rgba(16, 20, 25, .78);
   border: 1px solid var(--line);
   backdrop-filter: blur(8px);
-  /* Odatda deyarli ko'rinmaydi - videoni to'sib turmasligi uchun.
-     Tegilganda yorqinlashadi. */
-  opacity: .3;
+  /* Odatda umuman ko'rinmaydi: ekran tugmalari pastki qatorda bor,
+     bu esa faqat almashtirilganda qisqa vaqt chiqadigan tasdiq. */
+  opacity: 0;
   transition: opacity .25s;
   z-index: 5;
   pointer-events: none;
@@ -219,6 +219,14 @@ html, body {
 .tool span { font-size: 17px; line-height: 1; }
 .tool i { font-style: normal; font-size: 9px; color: var(--muted); letter-spacing: .3px; }
 .tool.wide { flex: 1.2; font-size: 13px; }
+
+#toolMid {
+  flex: 2.4;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+#toolMid .tool { flex: 1; }
 .tool:active, .tool.active { background: var(--accent); color: #04121f; border-color: var(--accent); }
 .tool.active i { color: rgba(4, 18, 31, .7); }
 
