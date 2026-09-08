@@ -29,7 +29,8 @@ function readToken() {
 }
 
 const prefs = Object.assign(
-  { mode: "trackpad", sens: 1.6, width: 1280, fps: 30, bitrate: 4000, cursor: true },
+  { mode: "trackpad", sens: 1.6, width: 1280, fps: 30, bitrate: 4000, cursor: true,
+    autoRotate: true, rotDir: 90 },
   JSON.parse(localStorage.getItem(PREF_STORE) || "{}")
 );
 const savePrefs = () => localStorage.setItem(PREF_STORE, JSON.stringify(prefs));
@@ -46,6 +47,8 @@ class Decoder {
     this.gotKey = false;
     this.frames = 0;
     this.onFirstFrame = null;
+    this.onFrame = null;
+    this.onResize = null;
   }
 
   get supported() {
@@ -80,10 +83,16 @@ class Decoder {
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
       this.canvas.height = h;
+      // Video o'lchami o'zgardi - joylashuvni qayta hisoblash kerak
+      if (this.onResize) this.onResize(w, h);
     }
     this.ctx.drawImage(frame, 0, 0);
     frame.close();
     this.frames++;
+    // Har kadrda xabar qildiramiz, faqat birinchisida emas: oqim qayta
+    // boshlanganda (ilovaga qaytilganda, sifat o'zgarganda) "Ekran
+    // kutilmoqda" yozuvi qayta chiqadi va uni yana yashirish kerak.
+    if (this.onFrame) this.onFrame();
     if (this.frames === 1 && this.onFirstFrame) this.onFirstFrame();
   }
 
@@ -204,7 +213,23 @@ const link = new Link(readToken());
 
 let host = null;
 let streaming = false;
-let zoom = 1, panX = 0, panY = 0;
+/*
+ * Ko'rinish holati.
+ *
+ * Kanvas o'lchami va joyi CSS'ga emas, shu yerdagi hisobga bo'ysunadi.
+ * Sababi burish: burilgan elementning getBoundingClientRect() natijasi
+ * uning tashqi to'rtburchagini beradi va bosish koordinatalarini
+ * hisoblashga yaramaydi. Shuning uchun o'lcham va burchakni o'zimiz
+ * saqlab, koordinatani teskari hisoblaymiz.
+ */
+const view = {
+  rot: 0,          // 0 yoki 90 daraja
+  auto: true,      // telefon tik turganda o'zi bursin
+  zoom: 1,
+  panX: 0,
+  panY: 0,
+  k: 1,            // videoning ekrandagi haqiqiy masshtabi
+};
 
 function toast(text, ms = 1800) {
   const el = $("toast");
@@ -279,10 +304,34 @@ link.onJson = (msg) => {
 
 link.onVideo = (data, isKey) => decoder.push(data, isKey);
 
-decoder.onFirstFrame = () => {
+decoder.onFrame = () => {
+  // hidden allaqachon true bo'lsa bu hech narsa qilmaydi, shuning uchun
+  // har kadrda chaqirish arzon.
   setPlaceholder(null);
-  canvas.classList.remove("hidden");
 };
+
+decoder.onFirstFrame = () => {
+  canvas.classList.remove("hidden");
+  resetView();
+};
+
+decoder.onResize = () => {
+  autoRotate();
+  applyView();
+};
+
+// Ekran burilganda yoki oyna o'lchami o'zgarganda qayta hisoblaymiz.
+// orientationchange dan keyin brauzer o'lchamlarni darrov yangilamaydi,
+// shuning uchun kichik kechikish bilan takrorlaymiz.
+function refreshView() {
+  autoRotate();
+  applyView();
+}
+addEventListener("resize", refreshView);
+addEventListener("orientationchange", () => {
+  refreshView();
+  setTimeout(refreshView, 250);
+});
 
 function fmtRate(kbps) {
   return kbps >= 1000 ? (kbps / 1000).toFixed(1) + " Mbit" : kbps + " kbit";
@@ -314,28 +363,88 @@ function sendMove(x, y) {
   link.send({ t: "mouse", a: "move", x, y });
 }
 
+/** Ekrandagi nuqtani video ichidagi nisbiy o'ringa (0..1) o'giradi. */
 function pointToNorm(cx, cy) {
-  const r = canvas.getBoundingClientRect();
+  const vw = canvas.width, vh = canvas.height;
+  const r = stage.getBoundingClientRect();
   // Kanvas hali chizilmagan bo'lsa (birinchi kadr kelmagan, ilova fonda,
-  // ekran burilayotgan payt) o'lcham nol bo'ladi. Bunda nolga bo'lish
-  // NaN beradi va serverga yaroqsiz koordinata ketadi - shuning uchun
-  // null qaytaramiz va chaqiruvchi koordinatasiz ish ko'radi.
-  if (r.width < 1 || r.height < 1) return null;
+  // ekran burilayotgan payt) o'lcham nol bo'ladi. Nolga bo'lish NaN
+  // beradi va serverga yaroqsiz koordinata ketardi.
+  if (!vw || !vh || !view.k || r.width < 1 || r.height < 1) return null;
+
+  const dx = cx - (r.left + r.width / 2) - view.panX;
+  const dy = cy - (r.top + r.height / 2) - view.panY;
+  const [u, v] = unrotate(dx, dy);
+  const x = 0.5 + u / (vw * view.k);
+  const y = 0.5 + v / (vh * view.k);
   return {
-    x: clamp((cx - r.left) / r.width, 0, 1),
-    y: clamp((cy - r.top) / r.height, 0, 1),
+    x: clamp(x, 0, 1),
+    y: clamp(y, 0, 1),
+    // Barmoq videodan tashqarida (qora chekkada) tegdimi - bosishni
+    // chekkaga siljitib yuborgandan ko'ra e'tiborsiz qoldirgan yaxshi.
+    inside: x >= -0.02 && x <= 1.02 && y >= -0.02 && y <= 1.02,
   };
+}
+
+/** Ekran yo'nalishini videoning o'z yo'nalishiga o'giradi.
+ *
+ * 90  - soat yo'nalishi bo'yicha: videoning tepasi ekranning o'ng chetiga
+ *       tushadi (telefonni chapga burib qaraladi).
+ * 270 - teskari tomonga.
+ */
+function unrotate(dx, dy) {
+  if (view.rot === 90) return [dy, -dx];
+  if (view.rot === 270) return [-dy, dx];
+  return [dx, dy];
+}
+
+function applyView() {
+  const vw = canvas.width, vh = canvas.height;
+  const r = stage.getBoundingClientRect();
+  if (!vw || !vh || r.width < 1 || r.height < 1) return;
+  // Burilgan holatda video ekranga yon tomoni bilan sig'adi
+  const sideways = view.rot === 90 || view.rot === 270;
+  const fit = sideways
+    ? Math.min(r.width / vh, r.height / vw)
+    : Math.min(r.width / vw, r.height / vh);
+  view.k = fit * view.zoom;
+  canvas.style.width = (vw * view.k) + "px";
+  canvas.style.height = (vh * view.k) + "px";
+  canvas.style.transform =
+    `translate(-50%, -50%) translate(${view.panX}px, ${view.panY}px) rotate(${view.rot}deg)`;
+  const chip = $("btnZoom");
+  chip.hidden = view.zoom <= 1.01;
+  chip.textContent = view.zoom.toFixed(1) + "×";
+  $("btnRotate").classList.toggle("on", view.rot !== 0);
+}
+
+/** Telefon tik turganda videoni yotqizadi. */
+function autoRotate() {
+  if (!view.auto) return;
+  const r = stage.getBoundingClientRect();
+  const portrait = r.height > r.width;
+  const wide = canvas.width >= canvas.height;
+  // Qaysi tomonga burish - foydalanuvchi tanlovi, uni saqlaymiz
+  const want = portrait && wide ? (prefs.rotDir === 270 ? 270 : 90) : 0;
+  if (want !== view.rot) {
+    view.rot = want;
+    view.panX = view.panY = 0;
+  }
+}
+
+function resetView() {
+  view.zoom = 1;
+  view.panX = view.panY = 0;
+  autoRotate();
+  applyView();
 }
 
 /** Berilgan nuqtaga bosadi. Koordinata aniqlanmasa kursor turgan joyga. */
 function clickAt(point, button = "left") {
   const n = point ? pointToNorm(point.x, point.y) : null;
+  if (n && !n.inside) return;          // qora chekkaga tegildi
   if (n) link.send({ t: "mouse", a: "click", b: button, x: n.x, y: n.y });
   else link.send({ t: "mouse", a: "click", b: button });
-}
-
-function applyTransform() {
-  canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
 }
 
 function showHint(cx, cy) {
@@ -375,6 +484,8 @@ const touch = {
   isSecondTap: false,
   lastDist: 0,
   lastMid: null,
+  startDist: 0,
+  startMid: null,
   scrollAcc: 0,
   sw: null,           // uch barmoq holati
 };
@@ -383,7 +494,7 @@ const touch = {
 // konsolidan ko'rinadi. Imo-ishoralar sezgir joy, ularni tekshirishning
 // boshqa yo'li yo'q.
 if (location.search.includes("debug")) {
-  window.__pult = { touch, prefs, link, get zoom() { return zoom; } };
+  window.__pult = { touch, prefs, link, view };
 }
 
 function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
@@ -485,7 +596,7 @@ stage.addEventListener("touchstart", (e) => {
       }, DRAG_HOLD_MS);
     } else if (prefs.mode === "touch") {
       const n = pointToNorm(p.x, p.y);
-      if (n) sendMove(n.x, n.y);
+      if (n && n.inside) sendMove(n.x, n.y);
       touch.longPress = setTimeout(() => {
         touch.longPress = null;
         if (!touch.movedEnough && touch.pts.size === 1) {
@@ -501,8 +612,8 @@ stage.addEventListener("touchstart", (e) => {
     touch.two = null;
     touch.moved = false;
     touch.startAt = now;
-    touch.lastDist = dist(pts[0], pts[1]);
-    touch.lastMid = mid(pts[0], pts[1]);
+    touch.lastDist = touch.startDist = dist(pts[0], pts[1]);
+    touch.lastMid = touch.startMid = mid(pts[0], pts[1]);
   } else if (pts.length === 3) {
     clearTimers();
     endDrag();
@@ -545,10 +656,11 @@ stage.addEventListener("touchmove", (e) => {
 
     if (prefs.mode === "touch") {
       const n = pointToNorm(p.x, p.y);
-      if (n) sendMove(n.x, n.y);
+      if (n && n.inside) sendMove(n.x, n.y);
     } else {
-      const k = prefs.sens / zoom;
-      link.send({ t: "mouse", a: "moveby", dx: dx * k, dy: dy * k });
+      const k = prefs.sens / view.zoom;
+      const [mu, mv] = unrotate(dx, dy);
+      link.send({ t: "mouse", a: "moveby", dx: mu * k, dy: mv * k });
     }
   } else if (touch.gesture === "two" && pts.length === 2) {
     const d = dist(pts[0], pts[1]);
@@ -558,22 +670,42 @@ stage.addEventListener("touchmove", (e) => {
     const dmx = m.x - touch.lastMid.x;
 
     if (!touch.two) {
-      // Barmoqlar orasi o'zgarishi ustunmi yoki siljish ustunmi - bir
-      // marta qaror qilamiz va imo-ishora oxirigacha shunda qolamiz.
-      if (Math.abs(dd) > Math.abs(dmy) * 1.4 + 2) touch.two = "zoom";
-      else touch.two = zoom > 1.02 ? "pan" : "scroll";
+      // Turkumlash boshlanishidan emas, YETARLI harakat to'planganidan
+      // keyin qilinadi. Birinchi touchmove'da barmoqlar orasi bir-ikki
+      // pikselga o'zgaradi, xolos - o'sha payt qaror qilinsa har doim
+      // "aylantirish" chiqib qolar va yaqinlashtirish umuman ishlamasdi.
+      const spread = Math.abs(d - touch.startDist);
+      const slide = Math.hypot(m.x - touch.startMid.x, m.y - touch.startMid.y);
+      if (Math.max(spread, slide) > 14) {
+        if (spread > slide) touch.two = "zoom";
+        else touch.two = view.zoom > 1.02 ? "pan" : "scroll";
+      }
     }
 
     if (touch.two === "zoom") {
-      zoom = clamp(zoom * (1 + dd / 260), 1, 6);
-      if (zoom <= 1.02) { zoom = 1; panX = 0; panY = 0; }
-      applyTransform();
+      const prev = view.zoom;
+      view.zoom = clamp(view.zoom * (1 + dd / 220), 1, 8);
+      if (view.zoom <= 1.02) { view.zoom = 1; view.panX = view.panY = 0; }
+      else if (prev > 1.01) {
+        // Yaqinlashtirganda barmoqlar orasidagi nuqta joyida qolsin
+        const f = view.zoom / prev;
+        const r2 = stage.getBoundingClientRect();
+        const ax = m.x - (r2.left + r2.width / 2);
+        const ay = m.y - (r2.top + r2.height / 2);
+        view.panX = ax - (ax - view.panX) * f;
+        view.panY = ay - (ay - view.panY) * f;
+      }
+      applyView();
     } else if (touch.two === "pan") {
-      panX += dmx;
-      panY += dmy;
-      applyTransform();
-    } else {
-      touch.scrollAcc += dmy;
+      view.panX += dmx;
+      view.panY += dmy;
+      applyView();
+    } else if (touch.two === "scroll") {
+      // Burilgan holatda barmoq yo'nalishi videoning yo'nalishiga
+      // moslanadi, aks holda yotqizilgan ekranda aylantirish
+      // yonboshiga ketardi.
+      const [, sv] = unrotate(dmx, dmy);
+      touch.scrollAcc += sv;
       const ticks = touch.scrollAcc / 42;
       if (Math.abs(ticks) >= 0.2) {
         link.send({ t: "scroll", dy: ticks });
@@ -691,7 +823,7 @@ stage.addEventListener("touchcancel", () => {
 canvas.addEventListener("mousemove", (e) => {
   if (e.buttons === 0 && prefs.mode !== "touch") return;
   const p = pointToNorm(e.clientX, e.clientY);
-  if (p) sendMove(p.x, p.y);
+  if (p && p.inside) sendMove(p.x, p.y);
 });
 canvas.addEventListener("mousedown", (e) => {
   const p = pointToNorm(e.clientX, e.clientY);
@@ -713,19 +845,88 @@ stage.addEventListener("wheel", (e) => {
 $("btnLeft").addEventListener("click", () => link.send({ t: "mouse", a: "click", b: "left" }));
 $("btnRight").addEventListener("click", () => link.send({ t: "mouse", a: "click", b: "right" }));
 
+/* -- ko'rinish tugmalari ------------------------------------------------ */
+
+function toggleRotate() {
+  // Uch holat: tik -> chapga -> o'ngga. Telefonni qaysi tomonga burish
+  // odat bo'lsa, o'shanisini tanlash uchun ikkala yo'nalish ham bor.
+  const next = { 0: 90, 90: 270, 270: 0 }[view.rot] ?? 90;
+  view.rot = next;
+  view.panX = view.panY = 0;
+  if (next !== 0) prefs.rotDir = next;
+  // Qo'lda burilganda avtomatik tanlov o'chadi, aks holda keyingi qayta
+  // hisobda tanlov bekor bo'lib ketardi.
+  view.auto = next === 0 ? false : view.auto;
+  if (next === 0) {
+    prefs.autoRotate = false;
+    $("chkAutoRotate").checked = false;
+  }
+  savePrefs();
+  applyView();
+  toast(next === 0 ? "Tik holat" : (next === 90 ? "Yotqizildi ↶" : "Yotqizildi ↷"));
+}
+
+async function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+      $("btnFull").classList.remove("on");
+      return;
+    }
+    await document.documentElement.requestFullscreen({ navigationUI: "hide" });
+    $("btnFull").classList.add("on");
+    // Yotqizishni so'raymiz. Ko'p brauzerlar buni faqat to'liq ekranda
+    // qabul qiladi, ba'zilari umuman qo'llab-quvvatlamaydi - shuning
+    // uchun rad javobi xato hisoblanmaydi.
+    try { await screen.orientation.lock("landscape"); } catch {}
+  } catch {
+    toast("Brauzer to‘liq ekranga ruxsat bermadi");
+  }
+  setTimeout(refreshView, 200);
+}
+
+$("btnRotate").addEventListener("click", toggleRotate);
+$("btnRotate2").addEventListener("click", toggleRotate);
+$("btnFull").addEventListener("click", toggleFullscreen);
+$("btnFull2").addEventListener("click", toggleFullscreen);
+$("btnFit").addEventListener("click", () => {
+  view.auto = prefs.autoRotate !== false;
+  resetView();
+  toast("O‘lchamga solindi");
+});
+$("btnZoom").addEventListener("click", () => {
+  view.zoom = 1;
+  view.panX = view.panY = 0;
+  applyView();
+});
+$("chkAutoRotate").addEventListener("change", (e) => {
+  prefs.autoRotate = e.target.checked;
+  view.auto = e.target.checked;
+  savePrefs();
+  refreshView();
+});
+document.addEventListener("fullscreenchange", () => {
+  $("btnFull").classList.toggle("on", !!document.fullscreenElement);
+  setTimeout(refreshView, 150);
+});
+
 $("btnMode").addEventListener("click", () => {
   prefs.mode = prefs.mode === "trackpad" ? "touch" : "trackpad";
   savePrefs();
   updateModeButton();
   toast(prefs.mode === "trackpad"
     ? "Trackpad: barmoq surilsa kursor siljiydi"
-    : "To‘g‘ridan-to‘g‘ri: qayerga bossang o‘sha yerga bosiladi");
+    : "Sensor rejimi: qayerga bossang, sichqoncha o‘sha yerga bosadi");
 });
 
 function updateModeButton() {
   const b = $("btnMode");
-  b.querySelector("span").textContent = prefs.mode === "trackpad" ? "🖱" : "👆";
-  b.querySelector("i").textContent = prefs.mode === "trackpad" ? "trackpad" : "to‘g‘ri";
+  const direct = prefs.mode === "touch";
+  b.querySelector("span").textContent = direct ? "👆" : "🖱";
+  b.querySelector("i").textContent = direct ? "sensor" : "trackpad";
+  // Faol holat ko'rinib tursin: tugma qaysi rejim YOQILGANINI ko'rsatadi,
+  // bosilganda ikkinchisiga o'tadi.
+  b.classList.toggle("active", direct);
 }
 
 /* -------------------------------------------------------- klaviatura */
@@ -812,7 +1013,7 @@ function buildMonitors(monitors) {
     b.onclick = () => {
       prefs.monitor = m.index;
       savePrefs();
-      zoom = 1; panX = 0; panY = 0; applyTransform();
+      resetView();
       buildMonitors(monitors);
       link.send({ t: "view", on: true, monitor: m.index });
     };
@@ -849,7 +1050,10 @@ function applyPrefsToUi() {
   $("selBitrate").value = String(prefs.bitrate);
   $("chkCursor").checked = !!prefs.cursor;
   $("rngSens").value = String(prefs.sens);
+  $("chkAutoRotate").checked = prefs.autoRotate !== false;
+  view.auto = prefs.autoRotate !== false;
   updateModeButton();
+  refreshView();
 }
 
 function pushView(partial) {

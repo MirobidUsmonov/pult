@@ -85,6 +85,21 @@ relative to your finger. **Direct** — you tap where you want to click.
 | Three-finger swipe up | Task View |
 | Three-finger swipe down | Show desktop |
 
+## Fitting a desktop onto a phone
+
+A 16:9 desktop shown upright on a portrait phone becomes a thin strip — small
+enough that text is unreadable. So the view rotates: when the phone is
+portrait, the desktop is turned sideways and fills the screen. On a 375-wide
+phone that is 78% larger than the upright fit. Rotation is automatic, and the
+⟲ button cycles upright → left → right if you prefer to turn the phone the
+other way. ⛶ goes fullscreen and asks the browser to lock landscape.
+
+Pinch to zoom up to 8×, then drag with two fingers to pan; the scale indicator
+in the top bar resets it. Taps stay accurate at any rotation and zoom because
+the pointer mapping is computed from the view transform rather than read back
+from the element's bounding box — a rotated element's bounding box is its outer
+rectangle, which would put every click in the wrong place.
+
 The window switcher works the way a laptop trackpad does: Alt is pressed and
 stays down while your fingers are on the screen, so the switcher panel remains
 open and moves with the swipe. It commits when you lift your fingers. Should

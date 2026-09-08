@@ -30,6 +30,9 @@
   <span id="hostName">Pult</span>
   <span class="spacer"></span>
   <span id="stats" class="muted"></span>
+  <button id="btnZoom" class="chip" hidden>1×</button>
+  <button id="btnRotate" class="icon" aria-label="Burish" title="Burish">⟲</button>
+  <button id="btnFull" class="icon" aria-label="To‘liq ekran" title="To‘liq ekran">⛶</button>
   <button id="btnSettings" class="icon" aria-label="Sozlamalar">⚙</button>
 </header>
 
@@ -115,6 +118,23 @@
         <span>Sezgirlik</span>
         <input type="range" id="rngSens" min="0.5" max="4" step="0.1" value="1.6">
       </label>
+    </section>
+
+    <section>
+      <h3>Ko‘rinish</h3>
+      <div class="row">
+        <button class="btn" id="btnFit">O‘lchamga solish</button>
+        <button class="btn" id="btnRotate2">Burish</button>
+        <button class="btn" id="btnFull2">To‘liq ekran</button>
+      </div>
+      <label class="line">
+        <span>Telefon tik turganda o‘zi bursin</span>
+        <input type="checkbox" id="chkAutoRotate" checked>
+      </label>
+      <p class="hint">
+        Yaqinlashtirish uchun ikki barmoq bilan cho‘zing. Yaqinlashtirilgan
+        holda ikki barmoq bilan surish rasmni siljitadi.
+      </p>
     </section>
 
     <section>

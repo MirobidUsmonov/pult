@@ -59,9 +59,30 @@ html, body {
 
 .icon {
   background: none; border: 0; color: var(--text);
-  font-size: 18px; padding: 6px 8px; cursor: pointer; border-radius: 8px;
+  font-size: 18px; padding: 6px 7px; cursor: pointer; border-radius: 8px;
 }
 .icon:active { background: var(--panel-2); }
+.icon.on { color: var(--accent); }
+
+/* Masshtab ko'rsatkichi - bosilsa asl holatga qaytaradi */
+.chip {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--accent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.chip[hidden] { display: none; }
+
+.hint {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
 
 /* ---------- ekran ---------- */
 
@@ -78,11 +99,17 @@ html, body {
   justify-content: center;
 }
 
+/* Kanvas oqimdan chiqarilgan va markazga qo'yilgan: o'lchami va burilishi
+   JavaScript'da aniq hisoblanadi. Flex bilan markazlashtirishdan voz
+   kechildi, chunki burilgan element flex ichida bir tomonga siljib
+   ketadi va bosish koordinatalari buziladi. */
 #screen {
-  max-width: 100%;
-  max-height: 100%;
+  position: absolute;
+  left: 50%;
+  top: 50%;
   display: block;
   transform-origin: center center;
+  will-change: transform;
   image-rendering: auto;
 }
 #screen.hidden { visibility: hidden; }
