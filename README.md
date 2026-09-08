@@ -64,6 +64,40 @@ On an NVIDIA GTX 1650 capturing 1080p at 30 fps, the agent uses about **3% CPU**
   encoded when the app is closed
 - **Installable** — add to home screen and it opens like a native app
 
+## Gestures
+
+Two pointer modes, switchable from the toolbar.
+
+**Trackpad** — the phone behaves like a laptop touchpad; the cursor moves
+relative to your finger. **Direct** — you tap where you want to click.
+
+| Gesture | Action |
+| --- | --- |
+| One finger drag | Move the cursor |
+| Tap | Left click |
+| Double tap | Double click |
+| Double tap, then hold and move | Drag (press, move, release) |
+| Two-finger tap | Right click |
+| Long press (direct mode) | Right click |
+| Two-finger drag | Scroll |
+| Pinch | Zoom the view, then drag to pan |
+| **Three-finger swipe left/right** | **Switch windows — Alt held down, follows the swipe** |
+| Three-finger swipe up | Task View |
+| Three-finger swipe down | Show desktop |
+
+The window switcher works the way a laptop trackpad does: Alt is pressed and
+stays down while your fingers are on the screen, so the switcher panel remains
+open and moves with the swipe. It commits when you lift your fingers. Should
+the connection drop mid-gesture, the host releases every key that session was
+holding — a stuck Alt would otherwise make the computer unusable.
+
+Two details that matter more than they look. The second tap of a double click
+is sent at the **first tap's** position, because a finger never lands twice on
+exactly the same pixel and Windows only counts two clicks as a double click if
+they are close enough together. And a second tap does not immediately begin a
+drag — the decision waits ~190 ms: lift quickly and it is a double click, keep
+holding and it becomes a drag.
+
 ## Requirements
 
 - Windows 10/11 (Linux and macOS backends are stubbed, not finished)

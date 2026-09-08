@@ -20,8 +20,9 @@ function readToken() {
     const t = decodeURIComponent(m[1]);
     localStorage.setItem(KEY_STORE, t);
     // Kalitni manzil qatorida qoldirmaymiz: brauzer tarixida va ekran
-    // suratlarida ko'rinib qolmasligi uchun.
-    history.replaceState(null, "", location.pathname);
+    // suratlarida ko'rinib qolmasligi uchun. So'rov qismi saqlanadi -
+    // u yerda kalitdan boshqa narsalar bo'lishi mumkin.
+    history.replaceState(null, "", location.pathname + location.search);
     return t;
   }
   return localStorage.getItem(KEY_STORE) || "";
@@ -315,10 +316,22 @@ function sendMove(x, y) {
 
 function pointToNorm(cx, cy) {
   const r = canvas.getBoundingClientRect();
+  // Kanvas hali chizilmagan bo'lsa (birinchi kadr kelmagan, ilova fonda,
+  // ekran burilayotgan payt) o'lcham nol bo'ladi. Bunda nolga bo'lish
+  // NaN beradi va serverga yaroqsiz koordinata ketadi - shuning uchun
+  // null qaytaramiz va chaqiruvchi koordinatasiz ish ko'radi.
+  if (r.width < 1 || r.height < 1) return null;
   return {
     x: clamp((cx - r.left) / r.width, 0, 1),
     y: clamp((cy - r.top) / r.height, 0, 1),
   };
+}
+
+/** Berilgan nuqtaga bosadi. Koordinata aniqlanmasa kursor turgan joyga. */
+function clickAt(point, button = "left") {
+  const n = point ? pointToNorm(point.x, point.y) : null;
+  if (n) link.send({ t: "mouse", a: "click", b: button, x: n.x, y: n.y });
+  else link.send({ t: "mouse", a: "click", b: button });
 }
 
 function applyTransform() {
@@ -335,22 +348,102 @@ function showHint(cx, cy) {
   hint._t = setTimeout(() => hint.classList.remove("show"), 400);
 }
 
+/* Imo-ishoralar sozlamalari. Barchasi piksel va millisekundda. */
+const TAP_MS = 300;         // shu vaqtdan tez ko'tarilsa - bosish
+const DOUBLE_MS = 330;      // ikki bosish orasidagi eng uzun tanaffus
+const DOUBLE_PX = 48;       // ikkinchi bosish shuncha yaqin bo'lishi kerak
+const DRAG_HOLD_MS = 190;   // ikkinchi tegish shuncha ushlansa - sudrash
+const MOVE_START_PX = 5;    // barmoq titrashi harakatga aylanmasligi uchun
+const SWITCH_START_PX = 45; // uch barmoq: oyna almashtirish boshlanishi
+const SWITCH_STEP_PX = 75;  // har shuncha surilganda - keyingi oyna
+const SWITCH_VERT_PX = 70;  // uch barmoq: yuqoriga/pastga
+
 const touch = {
   pts: new Map(),
-  mode: null,        // 'move' | 'scroll' | 'zoom' | 'pan'
-  moved: false,
-  startAt: 0,
+  gesture: null,      // 'point' | 'two' | 'switch' | 'done'
+  two: null,          // 'scroll' | 'zoom' | 'pan'
+  anchor: null,       // bosish yuboriladigan nuqta
+  start: null,        // barmoq tushgan joy
   last: null,
+  startAt: 0,
+  moved: false,
+  movedEnough: false,
+  dragging: false,
+  dragTimer: null,
+  longPress: null,
+  lastTap: null,      // {x, y, at} - oldingi bosish
+  isSecondTap: false,
   lastDist: 0,
   lastMid: null,
   scrollAcc: 0,
-  dragging: false,
-  lastTapEnd: 0,
-  longPress: null,
+  sw: null,           // uch barmoq holati
 };
+
+// Nosozlik izlash uchun: manzilga ?debug qo'shilsa ichki holat brauzer
+// konsolidan ko'rinadi. Imo-ishoralar sezgir joy, ularni tekshirishning
+// boshqa yo'li yo'q.
+if (location.search.includes("debug")) {
+  window.__pult = { touch, prefs, link, get zoom() { return zoom; } };
+}
 
 function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 function mid(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+function centroid(pts) {
+  const n = pts.length;
+  return {
+    x: pts.reduce((s, p) => s + p.x, 0) / n,
+    y: pts.reduce((s, p) => s + p.y, 0) / n,
+  };
+}
+
+function clearTimers() {
+  clearTimeout(touch.dragTimer);
+  clearTimeout(touch.longPress);
+  touch.dragTimer = null;
+  touch.longPress = null;
+}
+
+function beginDrag() {
+  if (touch.dragging) return;
+  touch.dragging = true;
+  const a = touch.anchor || touch.last;
+  const n = prefs.mode === "touch" && a ? pointToNorm(a.x, a.y) : null;
+  if (n) link.send({ t: "mouse", a: "down", b: "left", x: n.x, y: n.y });
+  else link.send({ t: "mouse", a: "down", b: "left" });
+  navigator.vibrate?.(12);
+  if (touch.last) showHint(touch.last.x, touch.last.y);
+}
+
+function endDrag() {
+  if (!touch.dragging) return;
+  link.send({ t: "mouse", a: "up", b: "left" });
+  touch.dragging = false;
+}
+
+/* -- uch barmoq: oyna almashtirish -------------------------------------- */
+
+function switchStep(dir) {
+  // Alt bosilgan holda Tab - oldinga, Shift+Tab - orqaga
+  if (dir < 0) {
+    link.send({ t: "key", a: "down", k: "shift" });
+    link.send({ t: "key", a: "tap", k: "Tab" });
+    link.send({ t: "key", a: "up", k: "shift" });
+  } else {
+    link.send({ t: "key", a: "tap", k: "Tab" });
+  }
+  navigator.vibrate?.(6);
+}
+
+function endSwitch() {
+  const sw = touch.sw;
+  if (sw && sw.alt) {
+    // Alt qo'yilganda tanlangan oyna oldinga chiqadi
+    link.send({ t: "key", a: "up", k: "alt" });
+  }
+  touch.sw = null;
+}
+
+/* -- barmoq hodisalari --------------------------------------------------- */
 
 stage.addEventListener("touchstart", (e) => {
   e.preventDefault();
@@ -358,89 +451,128 @@ stage.addEventListener("touchstart", (e) => {
     touch.pts.set(t.identifier, { x: t.clientX, y: t.clientY });
   }
   const pts = [...touch.pts.values()];
+  const now = performance.now();
 
   if (pts.length === 1) {
-    touch.startAt = performance.now();
+    const p = pts[0];
+    touch.startAt = now;
+    touch.start = { ...p };
+    touch.last = { ...p };
     touch.moved = false;
-    touch.last = { ...pts[0] };
-    touch.mode = "move";
+    touch.movedEnough = false;
+    touch.gesture = "point";
 
-    // Ikki marta tez tegib ushlab turish = ushlab sudrash (drag)
-    if (performance.now() - touch.lastTapEnd < 300) {
-      touch.dragging = true;
-      link.send({ t: "mouse", a: "down", b: "left" });
-      showHint(pts[0].x, pts[0].y);
+    touch.isSecondTap = !!(
+      touch.lastTap &&
+      now - touch.lastTap.at < DOUBLE_MS &&
+      dist(p, touch.lastTap) < DOUBLE_PX
+    );
+
+    // Ikkinchi bosish ataylab BIRINCHISINING joyiga yuboriladi. Barmoq
+    // aynan bir nuqtaga ikki marta tushmaydi, ikkita bosish esa turli
+    // joyga tushsa Windows ularni ikki marta bosish deb qabul qilmaydi.
+    touch.anchor = touch.isSecondTap
+      ? { x: touch.lastTap.x, y: touch.lastTap.y }
+      : { ...p };
+
+    if (touch.isSecondTap) {
+      // Bu yerda darrov sudrashni boshlamaymiz: barmoq tez ko'tarilsa
+      // bu ikki marta bosish, ushlab turilsa - sudrash. Qarorni
+      // kechiktiramiz.
+      touch.dragTimer = setTimeout(() => {
+        touch.dragTimer = null;
+        if (touch.pts.size === 1 && !touch.movedEnough) beginDrag();
+      }, DRAG_HOLD_MS);
     } else if (prefs.mode === "touch") {
-      const p = pointToNorm(pts[0].x, pts[0].y);
-      sendMove(p.x, p.y);
-      // Uzoq bosish = o'ng tugma
+      const n = pointToNorm(p.x, p.y);
+      if (n) sendMove(n.x, n.y);
       touch.longPress = setTimeout(() => {
-        if (!touch.moved) {
-          link.send({ t: "mouse", a: "click", b: "right", x: p.x, y: p.y });
+        touch.longPress = null;
+        if (!touch.movedEnough && touch.pts.size === 1) {
+          clickAt(p, "right");
           navigator.vibrate?.(15);
-          touch.mode = "done";
+          touch.gesture = "done";
         }
       }, 550);
     }
   } else if (pts.length === 2) {
-    clearTimeout(touch.longPress);
-    touch.mode = null;              // birinchi harakatda hal qilamiz
+    clearTimers();
+    touch.gesture = "two";
+    touch.two = null;
+    touch.moved = false;
+    touch.startAt = now;
     touch.lastDist = dist(pts[0], pts[1]);
     touch.lastMid = mid(pts[0], pts[1]);
-    touch.moved = false;
-    touch.startAt = performance.now();
+  } else if (pts.length === 3) {
+    clearTimers();
+    endDrag();
+    touch.gesture = "switch";
+    const c = centroid(pts);
+    touch.sw = { ox: c.x, oy: c.y, prevX: c.x, mode: null, alt: false, acc: 0, done: false };
   }
 }, { passive: false });
 
 stage.addEventListener("touchmove", (e) => {
   e.preventDefault();
   for (const t of e.changedTouches) {
-    if (touch.pts.has(t.identifier)) touch.pts.set(t.identifier, { x: t.clientX, y: t.clientY });
+    if (touch.pts.has(t.identifier)) {
+      touch.pts.set(t.identifier, { x: t.clientX, y: t.clientY });
+    }
   }
   const pts = [...touch.pts.values()];
 
-  if (pts.length === 1 && touch.mode === "move") {
+  if (touch.gesture === "point" && pts.length === 1) {
     const p = pts[0];
     const dx = p.x - touch.last.x;
     const dy = p.y - touch.last.y;
-    if (Math.abs(dx) + Math.abs(dy) > 3) {
-      touch.moved = true;
-      clearTimeout(touch.longPress);
-    }
     touch.last = { ...p };
 
-    if (prefs.mode === "touch" || touch.dragging) {
+    if (!touch.movedEnough) {
+      // Boshlanishda kichik titrashni butunlay e'tiborsiz qoldiramiz -
+      // aks holda bosish paytida kursor siljib ketadi.
+      if (dist(p, touch.start) <= MOVE_START_PX) return;
+      touch.movedEnough = true;
+      touch.moved = true;
+      clearTimeout(touch.longPress);
+      touch.longPress = null;
+      if (touch.isSecondTap && touch.dragTimer) {
+        // Ikkinchi tegishda surila boshladi - demak sudrash
+        clearTimeout(touch.dragTimer);
+        touch.dragTimer = null;
+        beginDrag();
+      }
+    }
+
+    if (prefs.mode === "touch") {
       const n = pointToNorm(p.x, p.y);
-      sendMove(n.x, n.y);
+      if (n) sendMove(n.x, n.y);
     } else {
-      // Trackpad: sezgirlikni zumga bo'lamiz, shunda kattalashtirilganda
-      // harakat ham nozikroq bo'ladi.
       const k = prefs.sens / zoom;
       link.send({ t: "mouse", a: "moveby", dx: dx * k, dy: dy * k });
     }
-  } else if (pts.length === 2) {
+  } else if (touch.gesture === "two" && pts.length === 2) {
     const d = dist(pts[0], pts[1]);
     const m = mid(pts[0], pts[1]);
     const dd = d - touch.lastDist;
     const dmy = m.y - touch.lastMid.y;
     const dmx = m.x - touch.lastMid.x;
 
-    if (!touch.mode) {
-      // Barmoqlar orasi o'zgarishi ustunmi yoki siljish ustunmi -
-      // shunga qarab bir marta qaror qilamiz va oxirigacha shunda qolamiz.
-      if (Math.abs(dd) > Math.abs(dmy) * 1.4 + 2) touch.mode = "zoom";
-      else touch.mode = zoom > 1.02 ? "pan" : "scroll";
+    if (!touch.two) {
+      // Barmoqlar orasi o'zgarishi ustunmi yoki siljish ustunmi - bir
+      // marta qaror qilamiz va imo-ishora oxirigacha shunda qolamiz.
+      if (Math.abs(dd) > Math.abs(dmy) * 1.4 + 2) touch.two = "zoom";
+      else touch.two = zoom > 1.02 ? "pan" : "scroll";
     }
 
-    if (touch.mode === "zoom") {
+    if (touch.two === "zoom") {
       zoom = clamp(zoom * (1 + dd / 260), 1, 6);
       if (zoom <= 1.02) { zoom = 1; panX = 0; panY = 0; }
       applyTransform();
-    } else if (touch.mode === "pan") {
+    } else if (touch.two === "pan") {
       panX += dmx;
       panY += dmy;
       applyTransform();
-    } else if (touch.mode === "scroll") {
+    } else {
       touch.scrollAcc += dmy;
       const ticks = touch.scrollAcc / 42;
       if (Math.abs(ticks) >= 0.2) {
@@ -451,6 +583,43 @@ stage.addEventListener("touchmove", (e) => {
     if (Math.abs(dd) + Math.abs(dmy) + Math.abs(dmx) > 4) touch.moved = true;
     touch.lastDist = d;
     touch.lastMid = m;
+  } else if (touch.gesture === "switch" && pts.length === 3 && touch.sw) {
+    const sw = touch.sw;
+    const c = centroid(pts);
+    const dx = c.x - sw.ox;
+    const dy = c.y - sw.oy;
+
+    if (!sw.mode) {
+      if (Math.abs(dx) > SWITCH_START_PX && Math.abs(dx) > Math.abs(dy)) sw.mode = "tab";
+      else if (Math.abs(dy) > SWITCH_VERT_PX && Math.abs(dy) > Math.abs(dx)) sw.mode = "vert";
+    }
+
+    if (sw.mode === "tab") {
+      if (!sw.alt) {
+        // Alt bosilib turadi va barmoqlar ko'tarilguncha qo'yilmaydi -
+        // shunda oyna tanlash oynasi ekranda qolib, surilishga ergashadi.
+        link.send({ t: "key", a: "down", k: "alt" });
+        sw.alt = true;
+        sw.acc = 0;
+        sw.prevX = c.x;
+        switchStep(dx > 0 ? 1 : -1);
+      } else {
+        sw.acc += c.x - sw.prevX;
+        sw.prevX = c.x;
+        while (sw.acc >= SWITCH_STEP_PX) { switchStep(1); sw.acc -= SWITCH_STEP_PX; }
+        while (sw.acc <= -SWITCH_STEP_PX) { switchStep(-1); sw.acc += SWITCH_STEP_PX; }
+      }
+    } else if (sw.mode === "vert" && !sw.done) {
+      sw.done = true;
+      if (dy < 0) {
+        link.send({ t: "combo", keys: ["win", "Tab"] });   // vazifalar ko'rinishi
+        toast("Vazifalar ko‘rinishi");
+      } else {
+        link.send({ t: "combo", keys: ["win", "d"] });     // ish stoli
+        toast("Ish stoli");
+      }
+      navigator.vibrate?.(15);
+    }
   }
 }, { passive: false });
 
@@ -458,56 +627,77 @@ stage.addEventListener("touchend", (e) => {
   e.preventDefault();
   const before = touch.pts.size;
   for (const t of e.changedTouches) touch.pts.delete(t.identifier);
-  clearTimeout(touch.longPress);
-  const dt = performance.now() - touch.startAt;
+  const remaining = touch.pts.size;
+  const now = performance.now();
+  const dt = now - touch.startAt;
 
-  if (touch.dragging && touch.pts.size === 0) {
-    link.send({ t: "mouse", a: "up", b: "left" });
-    touch.dragging = false;
-    touch.lastTapEnd = 0;
+  if (touch.gesture === "switch") {
+    if (remaining === 0) {
+      endSwitch();
+      touch.gesture = null;
+      touch.lastTap = null;
+    }
     return;
   }
 
-  if (before === 1 && touch.pts.size === 0 && !touch.moved && dt < 300 && touch.mode === "move") {
-    const p = pointToNorm(touch.last.x, touch.last.y);
-    if (prefs.mode === "touch") {
-      link.send({ t: "mouse", a: "click", b: "left", x: p.x, y: p.y });
-    } else {
-      link.send({ t: "mouse", a: "click", b: "left" });
+  if (touch.dragging) {
+    if (remaining === 0) {
+      endDrag();
+      touch.lastTap = null;
+      touch.gesture = null;
     }
-    showHint(touch.last.x, touch.last.y);
+    return;
+  }
+
+  clearTimers();
+
+  const isTap = before === 1 && remaining === 0 && touch.gesture === "point"
+    && !touch.movedEnough && dt < TAP_MS;
+
+  if (isTap) {
+    const a = touch.anchor;
+    clickAt(prefs.mode === "touch" ? a : null, "left");
+    showHint(a.x, a.y);
     navigator.vibrate?.(8);
-    touch.lastTapEnd = performance.now();
-  } else if (before === 2 && !touch.moved && dt < 300) {
+    // Ikkinchi bosishdan keyin hisob noldan boshlanadi, aks holda uchinchi
+    // tegish ham "ikkinchi" bo'lib qolaverardi.
+    touch.lastTap = touch.isSecondTap ? null : { x: a.x, y: a.y, at: now };
+  } else if (before === 2 && remaining === 0 && !touch.moved && dt < TAP_MS) {
     // Ikki barmoq bilan tegish = o'ng tugma (trackpad odati)
     link.send({ t: "mouse", a: "click", b: "right" });
     navigator.vibrate?.(12);
+    touch.lastTap = null;
   }
 
-  if (touch.pts.size === 0) {
-    touch.mode = null;
+  if (remaining === 0) {
+    touch.gesture = null;
+    touch.two = null;
     touch.scrollAcc = 0;
   }
 }, { passive: false });
 
 stage.addEventListener("touchcancel", () => {
   touch.pts.clear();
-  touch.mode = null;
-  if (touch.dragging) {
-    link.send({ t: "mouse", a: "up", b: "left" });
-    touch.dragging = false;
-  }
+  clearTimers();
+  endDrag();
+  endSwitch();
+  touch.gesture = null;
+  touch.two = null;
+  touch.lastTap = null;
 });
+
 
 // Kompyuter brauzeridan sinash uchun sichqoncha ham ishlaydi
 canvas.addEventListener("mousemove", (e) => {
   if (e.buttons === 0 && prefs.mode !== "touch") return;
   const p = pointToNorm(e.clientX, e.clientY);
-  sendMove(p.x, p.y);
+  if (p) sendMove(p.x, p.y);
 });
 canvas.addEventListener("mousedown", (e) => {
   const p = pointToNorm(e.clientX, e.clientY);
-  link.send({ t: "mouse", a: "down", b: ["left", "middle", "right"][e.button] || "left", x: p.x, y: p.y });
+  const b = ["left", "middle", "right"][e.button] || "left";
+  if (p) link.send({ t: "mouse", a: "down", b, x: p.x, y: p.y });
+  else link.send({ t: "mouse", a: "down", b });
 });
 canvas.addEventListener("mouseup", (e) => {
   link.send({ t: "mouse", a: "up", b: ["left", "middle", "right"][e.button] || "left" });
@@ -697,6 +887,12 @@ $("phBtn").onclick = () => startStream();
 // sarflanmasin.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
+    // Imo-ishora o'rtasida ilova fonga o'tsa, bosilgan klavish (masalan
+    // Alt+Tab paytidagi Alt) kompyuterda bosilgan holda qolib ketardi.
+    clearTimers();
+    endDrag();
+    endSwitch();
+    link.send({ t: "release_keys" });
     if (streaming) { stopStream(); streaming = true; }
   } else if (streaming) {
     startStream();

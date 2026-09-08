@@ -65,6 +65,13 @@ class ControllerSession:
         self._writer: asyncio.Task | None = None
         self._closed = False
 
+        # Bosib turilgan klavishlar. Alt+Tab kabi imo-ishoralarda klavish
+        # bir xabarda bosilib, boshqasida qo'yiladi. Agar orada aloqa
+        # uzilsa, klavish kompyuterda bosilgan holda qolib ketardi -
+        # Alt bosilib qolgan kompyuterni ishlatib bo'lmaydi. Shuning
+        # uchun sessiya yopilganda hammasini qo'yib yuboramiz.
+        self._held_keys: set[str] = set()
+
     # -- hayot sikli -------------------------------------------------------
 
     async def start(self) -> None:
@@ -75,9 +82,22 @@ class ControllerSession:
         if self._closed:
             return
         self._closed = True
+        self.release_keys()
         if self._writer:
             self._writer.cancel()
         await self.ctx.detach(self)
+
+    def release_keys(self) -> None:
+        """Bu sessiya bosib qo'ygan klavishlarni qo'yib yuboradi."""
+        for name in list(self._held_keys):
+            try:
+                self.ctx.input.key(name, "up")
+            except Exception:
+                pass
+        if self._held_keys:
+            log.info("sessiya %s: bosilgan klavishlar qo'yildi: %s",
+                     self.id, ", ".join(sorted(self._held_keys)))
+        self._held_keys.clear()
 
     async def _write_loop(self) -> None:
         try:
@@ -218,7 +238,17 @@ class ControllerSession:
 
     async def _on_key(self, msg: dict) -> None:
         self._check_input()
-        self.ctx.input.key(str(msg["k"]), str(msg.get("a", "tap")))
+        name = str(msg["k"])
+        action = str(msg.get("a", "tap"))
+        self.ctx.input.key(name, action)
+        if action == "down":
+            self._held_keys.add(name)
+        elif action == "up":
+            self._held_keys.discard(name)
+
+    async def _on_release_keys(self, msg: dict) -> None:
+        """Mijoz o'zi so'rasa ham qo'yib yuboramiz (ilova fonga o'tganda)."""
+        self.release_keys()
 
     async def _on_combo(self, msg: dict) -> None:
         self._check_input()
