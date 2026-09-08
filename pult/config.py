@@ -75,6 +75,16 @@ class StreamSettings:
     bitrate_kbps: int = 4000
     cursor: bool = True
     encoder: str | None = None  # None = avtomatik
+    # Ekran raqamini ekran olish manbasiga bog'lash. Bo'sh bo'lsa
+    # to'g'ridan-to'g'ri (0->0, 1->1). Videokarta chiqishlarining tartibi
+    # tizim ro'yxatiga mos kelmasa, foydalanuvchi buni ilovadan
+    # almashtira oladi.
+    monitor_map: list[int] = field(default_factory=list)
+    # Kursor ekranlar orasida erkin yursinmi. Yoqilgan bo'lsa kursor
+    # boshqa ekranga o'tganda ko'rinish ham o'sha ekranga ko'chadi -
+    # shunda kursor doim ko'rinib turadi. O'chirilgan bo'lsa kursor
+    # ko'rilayotgan ekrandan chiqmaydi.
+    follow_cursor: bool = True
 
 
 @dataclass

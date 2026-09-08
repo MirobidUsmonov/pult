@@ -213,6 +213,10 @@ const link = new Link(readToken());
 
 let host = null;
 let streaming = false;
+// Serverda hozir qaysi ekran ko'rsatilayotgani. Kursor ekranlar orasida
+// yurganda server buni o'zi o'zgartiradi, shuning uchun sozlamalardagi
+// tanlovga emas, serverning javobiga ishonamiz.
+let currentMonitor = 0;
 /*
  * Ko'rinish holati.
  *
@@ -276,6 +280,10 @@ link.onJson = (msg) => {
     host = msg.host;
     $("hostName").textContent = host.name;
     $("sheetHost").textContent = host.name;
+    currentMonitor = (msg.stream && msg.stream.monitor) || 0;
+    if (msg.stream && typeof msg.stream.follow_cursor === "boolean") {
+      $("chkFollow").checked = msg.stream.follow_cursor;
+    }
     buildMonitors(host.monitors);
     buildCommands(host.commands || []);
     applyPrefsToUi();
@@ -289,6 +297,11 @@ link.onJson = (msg) => {
     }
     startStream();
   } else if (msg.t === "stream") {
+    if (typeof msg.monitor === "number" && msg.monitor !== currentMonitor) {
+      currentMonitor = msg.monitor;
+      if (host) buildMonitors(host.monitors);
+      resetView();
+    }
     $("infoEnc").textContent = msg.encoder || "—";
     $("infoSize").textContent = `${msg.w}×${msg.h} · ${msg.fps} k/s`;
     if (msg.codec) decoder.configure(msg.codec);
@@ -299,6 +312,8 @@ link.onJson = (msg) => {
     toast(msg.msg);
   } else if (msg.t === "cmd_ok") {
     toast(msg.result || "bajarildi");
+  } else if (msg.t === "monitor_map") {
+    toast("Ekranlar almashtirildi");
   }
 };
 
@@ -342,7 +357,10 @@ function startStream() {
   setPlaceholder("Ekran kutilmoqda…");
   link.send({
     t: "view", on: true,
-    monitor: prefs.monitor ?? 0,
+    // Serverdagi joriy ekran: kursor ekranlar orasida yurgan bo'lsa
+    // server allaqachon boshqasiga o'tgan bo'lishi mumkin, uni
+    // eski tanlovga majburan qaytarmaymiz.
+    monitor: currentMonitor,
     fps: prefs.fps, width: prefs.width,
     bitrate: prefs.bitrate, cursor: prefs.cursor,
   });
@@ -458,10 +476,13 @@ function showHint(cx, cy) {
 }
 
 /* Imo-ishoralar sozlamalari. Barchasi piksel va millisekundda. */
-const TAP_MS = 300;         // shu vaqtdan tez ko'tarilsa - bosish
-const DOUBLE_MS = 330;      // ikki bosish orasidagi eng uzun tanaffus
-const DOUBLE_PX = 48;       // ikkinchi bosish shuncha yaqin bo'lishi kerak
-const DRAG_HOLD_MS = 190;   // ikkinchi tegish shuncha ushlansa - sudrash
+// Chegaralar Windows odatlariga moslangan: uning ikki marta bosish
+// oralig'i standart holda 500 ms. Avvalgi 330 ms juda qisqa edi -
+// odam biroz sekinroq bossa ikkinchi bosish alohida hisoblanardi.
+const TAP_MS = 400;         // shu vaqtdan tez ko'tarilsa - bosish
+const DOUBLE_MS = 500;      // ikki bosish orasidagi eng uzun tanaffus
+const DOUBLE_PX = 55;       // ikkinchi bosish shuncha yaqin bo'lishi kerak
+const DRAG_HOLD_MS = 320;   // ikkinchi tegish shuncha ushlansa - sudrash
 const MOVE_START_PX = 5;    // barmoq titrashi harakatga aylanmasligi uchun
 const SWITCH_START_PX = 45; // uch barmoq: oyna almashtirish boshlanishi
 const SWITCH_STEP_PX = 75;  // har shuncha surilganda - keyingi oyna
@@ -487,6 +508,7 @@ const touch = {
   startDist: 0,
   startMid: null,
   scrollAcc: 0,
+  scrollAxis: "y",    // aylantirish qaysi o'q bo'yicha
   sw: null,           // uch barmoq holati
 };
 
@@ -679,6 +701,16 @@ stage.addEventListener("touchmove", (e) => {
       if (Math.max(spread, slide) > 14) {
         if (spread > slide) touch.two = "zoom";
         else touch.two = view.zoom > 1.02 ? "pan" : "scroll";
+        if (touch.two === "scroll") {
+          // Aylantirish o'qini bir marta tanlaymiz. Ko'rinish burilgan
+          // bo'lsa foydalanuvchi telefonni ham burib ushlashi mumkin,
+          // shuning uchun qaysi tomonga surgan bo'lsa - o'sha o'q.
+          // Avval barmoq yo'nalishi majburan video yo'nalishiga
+          // o'girilardi va tik surish umuman aylantirmasdi.
+          const sy = Math.abs(m.y - touch.startMid.y);
+          const sx = Math.abs(m.x - touch.startMid.x);
+          touch.scrollAxis = (view.rot === 0 || sy >= sx) ? "y" : "x";
+        }
       }
     }
 
@@ -701,10 +733,9 @@ stage.addEventListener("touchmove", (e) => {
       view.panY += dmy;
       applyView();
     } else if (touch.two === "scroll") {
-      // Burilgan holatda barmoq yo'nalishi videoning yo'nalishiga
-      // moslanadi, aks holda yotqizilgan ekranda aylantirish
-      // yonboshiga ketardi.
-      const [, sv] = unrotate(dmx, dmy);
+      const sv = touch.scrollAxis === "x"
+        ? (view.rot === 270 ? dmx : -dmx)
+        : dmy;
       touch.scrollAcc += sv;
       const ticks = touch.scrollAcc / 42;
       if (Math.abs(ticks) >= 0.2) {
@@ -844,6 +875,10 @@ stage.addEventListener("wheel", (e) => {
 
 $("btnLeft").addEventListener("click", () => link.send({ t: "mouse", a: "click", b: "left" }));
 $("btnRight").addEventListener("click", () => link.send({ t: "mouse", a: "click", b: "right" }));
+$("btnDouble").addEventListener("click", () => {
+  link.send({ t: "mouse", a: "dblclick", b: "left" });
+  navigator.vibrate?.(10);
+});
 
 /* -- ko'rinish tugmalari ------------------------------------------------ */
 
@@ -1008,9 +1043,10 @@ function buildMonitors(monitors) {
   row.innerHTML = "";
   (monitors || []).forEach((m) => {
     const b = document.createElement("button");
-    b.className = "btn" + ((prefs.monitor ?? 0) === m.index ? " on" : "");
+    b.className = "btn" + (currentMonitor === m.index ? " on" : "");
     b.textContent = `${m.index + 1}-ekran · ${m.w}×${m.h}${m.primary ? " ★" : ""}`;
     b.onclick = () => {
+      currentMonitor = m.index;
       prefs.monitor = m.index;
       savePrefs();
       resetView();
@@ -1071,6 +1107,15 @@ $("rngSens").oninput = (e) => { prefs.sens = +e.target.value; savePrefs(); };
 $("btnSettings").onclick = () => { $("sheet").hidden = false; };
 $("btnCloseSheet").onclick = () => { $("sheet").hidden = true; };
 $("sheet").addEventListener("click", (e) => { if (e.target.id === "sheet") $("sheet").hidden = true; });
+
+$("chkFollow").onchange = (e) => {
+  link.send({ t: "view", on: true, follow: e.target.checked });
+  toast(e.target.checked
+    ? "Kursor ekranlar orasida yuradi, ko‘rinish unga ergashadi"
+    : "Kursor shu ekrandan chiqmaydi");
+};
+
+$("btnSwapMonitors").onclick = () => link.send({ t: "swap_monitors" });
 
 $("btnRun").onclick = () => {
   const cmd = $("runCmd").value.trim();

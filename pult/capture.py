@@ -30,6 +30,10 @@ _START = b"\x00\x00\x01"
 @dataclass
 class CaptureConfig:
     monitor: int = 0
+    # Ekran olish manbasining raqami. -1 bo'lsa monitor bilan bir xil.
+    # Alohida kerak, chunki videokarta chiqishlari tartibi tizimdagi
+    # ekranlar tartibiga har doim ham mos kelmaydi.
+    source: int = -1
     fps: int = 30
     scale_width: int = 0        # 0 = ekranning o'z kengligi
     bitrate_kbps: int = 4000
@@ -40,8 +44,8 @@ class CaptureConfig:
     def key(self) -> tuple:
         """Qayta ishga tushirish kerakmi yo'qmi - shuni solishtirish uchun."""
         return (
-            self.monitor, self.fps, self.scale_width, self.bitrate_kbps,
-            self.draw_cursor, self.gop_seconds, self.encoder,
+            self.monitor, self.source, self.fps, self.scale_width,
+            self.bitrate_kbps, self.draw_cursor, self.gop_seconds, self.encoder,
         )
 
 
@@ -180,6 +184,7 @@ class ScreenCapture:
     def _source_args(self, cfg: CaptureConfig) -> tuple[list[str], list[str]]:
         """(kirish argumentlari, filtr zanjirining boshi) qaytaradi."""
         system = platform.system()
+        source = cfg.source if cfg.source >= 0 else cfg.monitor
         mon = None
         for m in self.monitors:
             if m.get("index") == cfg.monitor:
@@ -191,7 +196,7 @@ class ScreenCapture:
         if system == "Windows" and "ddagrab" in self.caps.filters:
             # Desktop Duplication API - ekran GPU xotirasida olinadi
             src = (
-                f"ddagrab=output_idx={cfg.monitor}"
+                f"ddagrab=output_idx={source}"
                 f":framerate={cfg.fps}"
                 f":draw_mouse={1 if cfg.draw_cursor else 0}"
             )

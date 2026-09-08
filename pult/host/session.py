@@ -192,6 +192,8 @@ class ControllerSession:
             s.bitrate_kbps = max(200, min(50000, int(msg["bitrate"])))
         if "cursor" in msg:
             s.cursor = bool(msg["cursor"])
+        if "follow" in msg:
+            s.follow_cursor = bool(msg["follow"])
 
         was = self.viewing
         self.viewing = want
@@ -244,12 +246,19 @@ class ControllerSession:
         elif action == "moveby":
             ix, iy = self._accumulate(float(msg.get("dx", 0)), float(msg.get("dy", 0)))
             if ix or iy:
-                # Kursor boshqa ekranda qolgan bo'lsa avval shu ekranga
-                # olib kelamiz. Shunchaki chegaraga qisib qo'yilsa,
-                # kichkina harakatdan ham kursor uzoq chekkaga sakrab
-                # tushardi - kutilmagan va noqulay.
-                self.ctx.ensure_cursor_on_monitor()
-                wi.move_by(ix, iy, bounds=self.ctx.monitor_bounds())
+                if self.ctx.cfg.stream.follow_cursor:
+                    # Kursor ekranlar orasida erkin yuradi, ko'rinish esa
+                    # unga ergashadi - shunda kursor hech qachon
+                    # ko'rinmaydigan joyga o'tib ketmaydi.
+                    wi.move_by(ix, iy)
+                    await self.ctx.follow_cursor()
+                else:
+                    # Kursor boshqa ekranda qolgan bo'lsa avval shu ekranga
+                    # olib kelamiz. Shunchaki chegaraga qisib qo'yilsa,
+                    # kichkina harakatdan ham kursor uzoq chekkaga sakrab
+                    # tushardi - kutilmagan va noqulay.
+                    self.ctx.ensure_cursor_on_monitor()
+                    wi.move_by(ix, iy, bounds=self.ctx.monitor_bounds())
         elif action in ("down", "up", "click", "dblclick"):
             pos = None
             if "x" in msg and "y" in msg:
@@ -276,6 +285,20 @@ class ControllerSession:
             self._held_keys.add(name)
         elif action == "up":
             self._held_keys.discard(name)
+
+    async def _on_swap_monitors(self, msg: dict) -> None:
+        """Ekran raqami bilan video manbasi mos kelmasa - almashtiradi."""
+        from .. import config as cfgmod
+
+        new_map = self.ctx.rotate_monitor_map()
+        cfgmod.save(self.ctx.cfg)
+        log.info("ekran xaritasi o'zgardi: %s", new_map)
+        await self.ctx.sync_capture(changed=True)
+        for s in list(self.ctx.sessions):
+            try:
+                await s.send_json({"t": "monitor_map", "map": new_map})
+            except Exception:
+                pass
 
     async def _on_release_keys(self, msg: dict) -> None:
         """Mijoz o'zi so'rasa ham qo'yib yuboramiz (ilova fonga o'tganda)."""
@@ -317,6 +340,7 @@ class HostContext:
 
         self.capture = ScreenCapture(caps, self._on_unit, monitors=self.monitors)
         self._stats_task: asyncio.Task | None = None
+        self._cross_since = 0.0
 
         self._system = None
         if system_name() == "Windows":
@@ -332,6 +356,35 @@ class HostContext:
             if m["index"] == idx:
                 return m
         return self.monitors[0] if self.monitors else {"x": 0, "y": 0, "w": 1920, "h": 1080}
+
+    def monitor_at(self, x: int, y: int) -> int | None:
+        for m in self.monitors:
+            if m["x"] <= x < m["x"] + m["w"] and m["y"] <= y < m["y"] + m["h"]:
+                return m["index"]
+        return None
+
+    async def follow_cursor(self) -> None:
+        """Kursor boshqa ekranga o'tsa ko'rinishni ham o'sha yerga ko'chiradi.
+
+        Kechikish bilan: chegara ustida u yoq-bu yoqqa yurilganda oqim
+        qayta-qayta ishga tushib ketmasligi kerak - har qayta ishga
+        tushish yarim soniyalik to'xtalish demak.
+        """
+        x, y = self.input.cursor_pos()
+        idx = self.monitor_at(x, y)
+        if idx is None or idx == self.cfg.stream.monitor:
+            self._cross_since = 0.0
+            return
+        now = time.monotonic()
+        if not self._cross_since:
+            self._cross_since = now
+            return
+        if now - self._cross_since < 0.35:
+            return
+        self._cross_since = 0.0
+        self.cfg.stream.monitor = idx
+        log.info("kursor %d-ekranga o'tdi, ko'rinish ko'chirildi", idx + 1)
+        await self.sync_capture(changed=True)
 
     def monitor_bounds(self) -> tuple[int, int, int, int]:
         m = self.monitor()
@@ -369,6 +422,8 @@ class HostContext:
             },
             "stream": {
                 "monitor": self.cfg.stream.monitor,
+                "monitor_map": self.cfg.stream.monitor_map,
+                "follow_cursor": self.cfg.stream.follow_cursor,
                 "fps": self.cfg.stream.fps,
                 "width": self.cfg.stream.width,
                 "bitrate": self.cfg.stream.bitrate_kbps,
@@ -387,10 +442,36 @@ class HostContext:
             "monitor": self.cfg.stream.monitor,
         }
 
+    def source_for(self, monitor: int) -> int:
+        """Ekran raqamiga mos ekran olish manbasi."""
+        m = self.cfg.stream.monitor_map
+        if m and 0 <= monitor < len(m):
+            return m[monitor]
+        return monitor
+
+    def rotate_monitor_map(self) -> list[int]:
+        """Ekran-manba bog'lanishini bir qadam suradi.
+
+        Ikki ekranli kompyuterda bu ularni almashtiradi. Videokarta
+        chiqishlarining tartibini ishonchli aniqlashning yo'li yo'q,
+        shuning uchun taxmin noto'g'ri chiqsa foydalanuvchi bir bosishda
+        tuzata oladi.
+        """
+        n = len(self.monitors)
+        if n < 2:
+            raise ValueError("almashtirish uchun kamida ikkita ekran kerak")
+        cur = list(self.cfg.stream.monitor_map) or list(range(n))
+        if len(cur) != n:
+            cur = list(range(n))
+        cur = cur[1:] + cur[:1]
+        self.cfg.stream.monitor_map = cur
+        return cur
+
     def _capture_config(self) -> CaptureConfig:
         s = self.cfg.stream
         return CaptureConfig(
             monitor=s.monitor,
+            source=self.source_for(s.monitor),
             fps=s.fps,
             scale_width=s.width,
             bitrate_kbps=s.bitrate_kbps,

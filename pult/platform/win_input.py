@@ -183,13 +183,25 @@ _MONITORENUMPROC = ctypes.WINFUNCTYPE(
 MONITORINFOF_PRIMARY = 0x00000001
 
 
-def list_monitors() -> list[dict]:
-    """Ekranlar ro'yxati, chapdan o'ngga tartiblangan.
+def _device_number(name: str) -> int:
+    """"\\\\.\\DISPLAY3" -> 3. Raqam topilmasa katta qiymat qaytaradi."""
+    digits = "".join(ch for ch in name if ch.isdigit())
+    return int(digits) if digits else 9999
 
-    Tartib ataylab chapdan-o'ngga: telefonda "1-ekran / 2-ekran" ko'rsatilganda
-    bu jismoniy joylashuvga mos tushadi. ddagrab'ning output_idx raqami odatda
-    shu tartibga to'g'ri keladi, lekin kafolat yo'q - shuning uchun sozlamalarda
-    uni qo'lda almashtirish mumkin.
+
+def list_monitors() -> list[dict]:
+    """Ekranlar ro'yxati, qurilma raqami bo'yicha tartiblangan.
+
+    Tartib muhim: ekranni olish (ddagrab) uni videokarta chiqishlari
+    tartibida raqamlaydi, biz esa shu raqam bilan kiritishni to'g'ri
+    ekranga yuborishimiz kerak. Ikkalasi mos kelmasa video bitta
+    ekrandan, sichqoncha boshqasidan bo'ladi.
+
+    Avval ro'yxat chapdan o'ngga tartiblangan edi va aynan shu xatoga
+    olib keldi: chapdagi ekran DISPLAY2 bo'lsa, u birinchi o'ringa
+    tushib qolardi. Qurilma raqami (DISPLAY1, DISPLAY2, ...) videokarta
+    tartibiga ancha yaqin. Baribir kafolat yo'q, shuning uchun
+    sozlamalarda qo'lda almashtirish ham bor.
     """
     found: list[dict] = []
 
@@ -211,7 +223,7 @@ def list_monitors() -> list[dict]:
         return True
 
     user32.EnumDisplayMonitors(None, None, _MONITORENUMPROC(_cb), 0)
-    found.sort(key=lambda m: (m["x"], m["y"]))
+    found.sort(key=lambda m: _device_number(m["device"]))
     for i, m in enumerate(found):
         m["index"] = i
     return found

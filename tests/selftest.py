@@ -350,8 +350,32 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                 # -- ko'p ekranli xatti-harakat
                 if len(mons) >= 2:
                     a, b = mons[0], mons[1]
-                    await ws.send_json({"t": "view", "on": True, "monitor": a["index"]})
-                    await asyncio.sleep(0.4)
+
+                    # -- kursor ekranlar orasida yursin: ko'rinish ergashadi
+                    await ws.send_json({"t": "view", "on": True,
+                                        "monitor": a["index"], "follow": True})
+                    await asyncio.sleep(0.5)
+                    # Qo'shni ekranga YAQIN chetdan boshlaymiz
+                    toward = 1 if b["x"] > a["x"] else -1
+                    start_x = a["x"] + a["w"] - 5 if toward > 0 else a["x"] + 5
+                    wi.move_to(start_x, a["y"] + a["h"] // 2)
+                    await asyncio.sleep(0.1)
+                    for _ in range(14):
+                        await ws.send_json({"t": "mouse", "a": "moveby",
+                                            "dx": 60 * toward, "dy": 0})
+                        await asyncio.sleep(0.07)
+                    await asyncio.sleep(1.2)
+                    gx, gy = wi.cursor_pos()
+                    crossed = (b["x"] <= gx < b["x"] + b["w"])
+                    followed = server.ctx.cfg.stream.monitor == b["index"]
+                    check("kursor ikkinchi ekranga o'ta oladi", crossed, f"kursor ({gx},{gy})")
+                    check("ko'rinish kursorga ergashdi", followed,
+                          f"server {server.ctx.cfg.stream.monitor + 1}-ekranni ko'rsatyapti")
+
+                    # -- endi chegaralash rejimi
+                    await ws.send_json({"t": "view", "on": True,
+                                        "monitor": a["index"], "follow": False})
+                    await asyncio.sleep(0.5)
 
                     # Kursorni ataylab BOSHQA ekranga qo'yamiz va kichkina
                     # harakat yuboramiz: kursor ko'rilayotgan ekranga

@@ -79,7 +79,8 @@ relative to your finger. **Direct** — you tap where you want to click.
 | Double tap, then hold and move | Drag (press, move, release) |
 | Two-finger tap | Right click |
 | Long press (direct mode) | Right click |
-| Two-finger drag | Scroll |
+| Two-finger drag | Scroll (either axis when the view is rotated) |
+| The 2× button | Double click, when tapping twice is fiddly |
 | Pinch | Zoom the view, then drag to pan |
 | **Three-finger swipe left/right** | **Switch windows — Alt held down, follows the swipe** |
 | Three-finger swipe up | Task View |
@@ -87,13 +88,19 @@ relative to your finger. **Direct** — you tap where you want to click.
 
 ### Several monitors
 
-The pointer is confined to the monitor you are looking at. On a multi-monitor
-machine this matters: in trackpad mode a click carries no coordinates, it lands
-wherever the cursor happens to be — so a cursor left behind on another screen
-means you click on a screen you cannot see. Switching monitors in the app moves
-the cursor across with you, and if it is somewhere else when you start moving,
-it is brought to the middle of the visible screen rather than snapped to the
-nearest edge.
+Move the cursor past the edge of one screen and it crosses to the next, and the
+view follows it — so the cursor is never on a screen you cannot see. This
+matters because in trackpad mode a click carries no coordinates: it lands
+wherever the cursor happens to be, and a cursor left behind on another monitor
+means clicking blind. If you would rather keep the pointer on one screen, turn
+off *Kursor ekranlar orasida yursin* and it stays put.
+
+**If the video shows one screen while the mouse moves on another**, press
+*Ekranlar almashib qolgan* in the settings. Screen capture numbers monitors in
+the graphics adapter's output order, which is not something the system exposes;
+Pult orders them by device number (`\.\DISPLAY1`, `DISPLAY2`, …), which is
+usually right but cannot be guaranteed. The button rotates the mapping and
+saves it.
 
 ## Fitting a desktop onto a phone
 
@@ -120,7 +127,7 @@ Two details that matter more than they look. The second tap of a double click
 is sent at the **first tap's** position, because a finger never lands twice on
 exactly the same pixel and Windows only counts two clicks as a double click if
 they are close enough together. And a second tap does not immediately begin a
-drag — the decision waits ~190 ms: lift quickly and it is a double click, keep
+drag — the decision waits ~320 ms: lift quickly and it is a double click, keep
 holding and it becomes a drag.
 
 ## Requirements

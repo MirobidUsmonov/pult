@@ -39,6 +39,7 @@
 <footer id="toolbar">
   <button id="btnMode"  class="tool" title="Boshqaruv usuli"><span>🖱</span><i>trackpad</i></button>
   <button id="btnLeft"  class="tool wide">chap</button>
+  <button id="btnDouble" class="tool" title="Ikki marta bosish"><span>2×</span><i>ikki</i></button>
   <button id="btnRight" class="tool wide">o‘ng</button>
   <button id="btnKeys"  class="tool" title="Klaviatura"><span>⌨</span><i>klav</i></button>
 </footer>
@@ -79,6 +80,15 @@
     <section>
       <h3>Ekran</h3>
       <div class="row" id="monitorRow"></div>
+      <label class="line">
+        <span>Kursor ekranlar orasida yursin</span>
+        <input type="checkbox" id="chkFollow" checked>
+      </label>
+      <button class="btn" id="btnSwapMonitors">Ekranlar almashib qolgan</button>
+      <p class="hint">
+        Video bitta ekrandan, sichqoncha boshqasidan bo‘lsa shu tugmani
+        bosing — bog‘lanish almashadi va saqlanadi.
+      </p>
     </section>
 
     <section>
