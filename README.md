@@ -76,7 +76,8 @@ relative to your finger. **Direct** — you tap where you want to click.
 | One finger drag | Move the cursor |
 | Tap | Left click |
 | Double tap | Double click |
-| Double tap, then hold and move | Drag (press, move, release) |
+| **Press and hold ~0.8 s, then move** | **Grab and drag — the reliable way** |
+| Double tap, then hold and move | Drag (trackpad idiom, if you prefer it) |
 | Two-finger tap | Right click |
 | Long press (direct mode) | Right click |
 | Two-finger drag | Scroll (either axis when the view is rotated) |
@@ -133,6 +134,12 @@ stays down while your fingers are on the screen, so the switcher panel remains
 open and moves with the swipe. It commits when you lift your fingers. Should
 the connection drop mid-gesture, the host releases every key that session was
 holding — a stuck Alt would otherwise make the computer unusable.
+
+Dragging has two ways in because the trackpad idiom — double tap, keep the
+second tap down, then move — turns out to be hard to perform on glass. Pressing
+and holding for about 0.8 s grabs whatever is under the pointer, a green ring
+follows your finger while you hold it, and lifting drops it. Anything shorter
+than the hold is an ordinary click, so there is no duration that does nothing.
 
 Two details that matter more than they look. The second tap of a double click
 is sent at the **first tap's** position, because a finger never lands twice on

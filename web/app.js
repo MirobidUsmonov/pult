@@ -477,14 +477,32 @@ function clickAt(point, button = "left") {
   else link.send({ t: "mouse", a: "click", b: button });
 }
 
-function showHint(cx, cy) {
+function moveHint(cx, cy) {
   const hint = $("cursorHint");
   const r = stage.getBoundingClientRect();
   hint.style.left = cx - r.left + "px";
   hint.style.top = cy - r.top + "px";
+}
+
+function showHint(cx, cy) {
+  const hint = $("cursorHint");
+  moveHint(cx, cy);
   hint.classList.add("show");
   clearTimeout(hint._t);
   hint._t = setTimeout(() => hint.classList.remove("show"), 400);
+}
+
+/** Ushlangan/qo'yilgan holatni bildiradi. */
+function grabFeedback(on) {
+  const hint = $("cursorHint");
+  clearTimeout(hint._t);
+  if (on) {
+    hint.classList.add("grab", "show");
+    navigator.vibrate?.([14, 45, 28]);
+    toast("Ushlandi — suring, barmoqni ko‘tarsangiz qo‘yiladi");
+  } else {
+    hint.classList.remove("grab", "show");
+  }
 }
 
 /* Imo-ishoralar sozlamalari. Barchasi piksel va millisekundda. */
@@ -500,6 +518,10 @@ const SWITCH_START_PX = 45; // uch barmoq: oyna almashtirish boshlanishi
 const SWITCH_STEP_PX = 75;  // har shuncha surilganda - keyingi oyna
 const SWITCH_VERT_PX = 70;  // uch barmoq: yuqoriga/pastga
 const EDGE_SWIPE_PX = 55;   // qora chekkada surish: ekran almashtirish
+// Bosib turib ushlash. Ikki marta bosib sudrash trackpad odati bo'lib,
+// telefonda uni bajarish qiyin ekan - bu esa oddiyroq yo'l: barmoqni
+// bosib tursang ushlaydi, surasan, ko'tarsang qo'yadi.
+const HOLD_GRAB_MS = 800;
 
 const touch = {
   pts: new Map(),
@@ -564,6 +586,7 @@ function endDrag() {
   if (!touch.dragging) return;
   link.send({ t: "mouse", a: "up", b: "left" });
   touch.dragging = false;
+  grabFeedback(false);
 }
 
 /* -- ekran ko'rsatkichi va almashtirgichi -------------------------------- */
@@ -767,17 +790,22 @@ stage.addEventListener("touchstart", (e) => {
         touch.dragTimer = null;
         if (touch.pts.size === 1 && !touch.movedEnough) beginDrag();
       }, DRAG_HOLD_MS);
-    } else if (prefs.mode === "touch") {
-      const n = pointToNorm(p.x, p.y);
-      if (n && n.inside) sendMove(n.x, n.y);
+    } else {
+      if (prefs.mode === "touch") {
+        const n = pointToNorm(p.x, p.y);
+        if (n && n.inside) sendMove(n.x, n.y);
+      }
+      // Bosib turib ushlash - ikkala rejimda ham. Avval bu faqat
+      // sensor rejimida va o'ng tugma uchun ishlatilardi; o'ng tugma
+      // ikki barmoq bilan tegishda qoldi.
       touch.longPress = setTimeout(() => {
         touch.longPress = null;
-        if (!touch.movedEnough && touch.pts.size === 1) {
-          clickAt(p, "right");
-          navigator.vibrate?.(15);
-          touch.gesture = "done";
+        if (!touch.movedEnough && touch.pts.size === 1 && !touch.dragging) {
+          beginDrag();
+          grabFeedback(true);
+          moveHint(touch.last.x, touch.last.y);
         }
-      }, 550);
+      }, HOLD_GRAB_MS);
     }
   } else if (pts.length === 2) {
     clearTimers();
@@ -839,6 +867,8 @@ stage.addEventListener("touchmove", (e) => {
         beginDrag();
       }
     }
+
+    if (touch.dragging) moveHint(p.x, p.y);
 
     if (prefs.mode === "touch") {
       const n = pointToNorm(p.x, p.y);
@@ -991,8 +1021,11 @@ stage.addEventListener("touchend", (e) => {
 
   clearTimers();
 
+  // Ushlash chegarasigacha bo'lgan har qanday tegish - oddiy bosish.
+  // Aks holda 400 ms bilan 800 ms orasida "hech narsa bo'lmaydigan"
+  // bo'shliq qolardi.
   const isTap = before === 1 && remaining === 0 && touch.gesture === "point"
-    && !touch.movedEnough && dt < TAP_MS;
+    && !touch.movedEnough && dt < HOLD_GRAB_MS;
 
   if (isTap) {
     const a = touch.anchor;
