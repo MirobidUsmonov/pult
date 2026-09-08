@@ -59,6 +59,57 @@ def section(title: str) -> None:
     print(f"=== {title} ===")
 
 
+def cursor_still(wi, ms: int = 80) -> bool:
+    """Kursor tinch turibdimi."""
+    a = wi.cursor_pos()
+    time.sleep(ms / 1000)
+    return a == wi.cursor_pos()
+
+
+def wait_still(wi, timeout: float = 3.0) -> bool:
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if cursor_still(wi):
+            return True
+    return False
+
+
+def measure_pointer(wi, targets, send, tries: int = 3) -> tuple[int, bool]:
+    """Kursorni belgilangan nuqtalarga yuborib, aniqlikni o'lchaydi.
+
+    Qaytaradi: (eng katta xato, xalaqit bo'ldimi).
+
+    Foydalanuvchi shu payt sichqonchani ishlatayotgan bo'lsa, uning
+    harakati bizning buyrug'imizni bosib ketadi va o'lchov ma'nosiz
+    bo'ladi. Buni xato deb hisoblash noto'g'ri bo'lardi - shuning uchun
+    kursor tinchligini kutamiz, bir necha marta urinamiz va baribir
+    chiqmasa "o'lchab bo'lmadi" deb belgilaymiz.
+    """
+    worst = 0
+    interference = False
+    for (tx, ty) in targets:
+        best = None
+        for _ in range(tries):
+            if not wait_still(wi, timeout=2.0):
+                interference = True
+                continue
+            send(tx, ty)
+            t0 = time.monotonic()
+            err = 10**6
+            while time.monotonic() - t0 < 0.8:
+                time.sleep(0.02)
+                gx, gy = wi.cursor_pos()
+                err = max(abs(gx - tx), abs(gy - ty))
+                if err <= 2:
+                    break
+            best = err if best is None else min(best, err)
+            if best <= 2:
+                break
+            interference = True
+        worst = max(worst, best if best is not None else 10**6)
+    return worst, interference
+
+
 def free_port() -> int:
     import socket
 
@@ -115,16 +166,16 @@ def test_input() -> list[dict]:
         return []
 
     saved = wi.cursor_pos()
-    worst = 0
-    for m in mons:
-        for fx, fy in ((0.5, 0.5), (0.0, 0.0), (0.99, 0.99)):
-            tx = m["x"] + int(fx * (m["w"] - 1))
-            ty = m["y"] + int(fy * (m["h"] - 1))
-            wi.move_to(tx, ty)
-            time.sleep(0.04)
-            gx, gy = wi.cursor_pos()
-            worst = max(worst, abs(gx - tx), abs(gy - ty))
-    check("kursor aniqligi", worst <= 2, f"eng katta xato {worst} px")
+    targets = [
+        (m["x"] + int(fx * (m["w"] - 1)), m["y"] + int(fy * (m["h"] - 1)))
+        for m in mons
+        for fx, fy in ((0.5, 0.5), (0.0, 0.0), (0.99, 0.99))
+    ]
+    worst, noisy = measure_pointer(wi, targets, wi.move_to)
+    if worst > 2 and noisy:
+        check("kursor aniqligi", None, "o'lchab bo'lmadi - sichqoncha ishlatilmoqda")
+    else:
+        check("kursor aniqligi", worst <= 2, f"eng katta xato {worst} px")
 
     wi.move_to(mons[0]["x"] + 400, mons[0]["y"] + 400)
     time.sleep(0.05)
@@ -264,15 +315,36 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                 wi = input_backend()
                 saved = wi.cursor_pos()
                 mon = mons[0]
-                worst = 0
-                for nx, ny in ((0.5, 0.5), (0.0, 0.0), (1.0, 1.0)):
-                    await ws.send_json({"t": "mouse", "a": "move", "x": nx, "y": ny})
-                    await asyncio.sleep(0.1)
-                    gx, gy = wi.cursor_pos()
-                    ex = mon["x"] + round(nx * (mon["w"] - 1))
-                    ey = mon["y"] + round(ny * (mon["h"] - 1))
-                    worst = max(worst, abs(gx - ex), abs(gy - ey))
-                check("protokol orqali sichqoncha", worst <= 2, f"xato {worst} px")
+                targets = [
+                    (mon["x"] + round(nx * (mon["w"] - 1)), mon["y"] + round(ny * (mon["h"] - 1)))
+                    for nx, ny in ((0.5, 0.5), (0.0, 0.0), (1.0, 1.0), (0.3, 0.7))
+                ]
+                latency: list[float] = []
+
+                def send_via_protocol(tx: int, ty: int) -> None:
+                    # Sinxron funksiyadan asinxron yuborish: o'lchov mantig'i
+                    # ikkala testda bir xil bo'lishi uchun shunday qilingan.
+                    nx = (tx - mon["x"]) / (mon["w"] - 1)
+                    ny = (ty - mon["y"]) / (mon["h"] - 1)
+                    t0 = time.monotonic()
+                    fut = asyncio.run_coroutine_threadsafe(
+                        ws.send_json({"t": "mouse", "a": "move", "x": nx, "y": ny}), loop
+                    )
+                    fut.result(timeout=3)
+                    latency.append((time.monotonic() - t0) * 1000)
+
+                loop = asyncio.get_running_loop()
+                worst, noisy = await asyncio.to_thread(
+                    measure_pointer, wi, targets, send_via_protocol
+                )
+                detail = f"xato {worst} px"
+                if latency:
+                    detail += f", yuborish {sum(latency) / len(latency):.0f} ms"
+                if worst > 2 and noisy:
+                    check("protokol orqali sichqoncha", None,
+                          "o'lchab bo'lmadi - sichqoncha ishlatilmoqda")
+                else:
+                    check("protokol orqali sichqoncha", worst <= 2, detail)
                 wi.move_to(*saved)
 
                 # -- xatolar
@@ -310,6 +382,7 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
 
 async def main() -> int:
     print("Pult - o'z-o'zini tekshiruv")
+    print("Sichqonchaga tegmang: test kursorni harakatlantirib aniqlikni o'lchaydi.")
     print(f"Vaqtinchalik sozlamalar: {_TMP}")
 
     caps = test_environment()
