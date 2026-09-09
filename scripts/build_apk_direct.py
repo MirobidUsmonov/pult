@@ -272,6 +272,49 @@ def build(tools: Tools, out_dir: Path) -> Path:
 BIDO_PYTHON = Path(
     r"C:\Users\Windows 11\mcp\claude-bot-run\.venv-telegram\Scripts\python.exe"
 )
+BIDO_ENV = Path(r"C:\Users\Windows 11\mcp\claude-bot-run\.env")
+
+
+def read_env(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.is_file():
+        return values
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            values[k.strip()] = v.strip()
+    return values
+
+
+def bot_credentials() -> tuple[str, str] | None:
+    """Bot tokeni va qabul qiluvchi chat'ni topadi.
+
+    Avval Pult'ning o'z sozlamasi (python -m pult --telegram bilan
+    qo'yiladi), u bo'sh bo'lsa BIDO yordamchisining .env fayli.
+
+    Bot yo'li akkaunt sessiyasidan ko'ra ishonchli: token eskirmaydi va
+    kirish kodi kerak emas. Akkaunt sessiyasi esa Telegram uni bekor
+    qilsa qaytadan kod so'rashni talab qiladi - kod kelmasa hammasi
+    to'xtab qoladi.
+    """
+    sys.path.insert(0, str(ROOT))
+    try:
+        from pult import config as cfgmod
+
+        t = cfgmod.load().telegram
+        if t.bot_token and t.chat_id:
+            return t.bot_token, str(t.chat_id)
+    except Exception:
+        pass
+
+    env = read_env(BIDO_ENV)
+    token = env.get("TELEGRAM_BOT_TOKEN", "")
+    # ALLOWED_USERS - vergul bilan ajratilgan ro'yxat, birinchisi egasi
+    chat = env.get("ALLOWED_USERS", "").split(",")[0].strip()
+    if token and chat:
+        return token, chat
+    return None
 
 
 def send_to_saved(apk: Path) -> bool:
@@ -310,19 +353,12 @@ def send_to_telegram(apk: Path) -> None:
     Fayl bot bilan bo'lgan chatga tushadi, u yerdan bir bosishda
     Saqlanganlarga yuborish mumkin.
     """
-    sys.path.insert(0, str(ROOT))
-    try:
-        from pult import config as cfgmod
-    except Exception as exc:
-        say(f"  Telegram: sozlamalarni o'qib bo'lmadi ({exc})")
-        return
-
-    cfg = cfgmod.load()
-    t = cfg.telegram
-    if not (t.bot_token and t.chat_id):
+    creds = bot_credentials()
+    if creds is None:
         say("  Telegram sozlanmagan - o'tkazib yuborildi")
         say("  Sozlash uchun:  python -m pult --telegram <BOT_TOKEN>")
         return
+    bot_token, chat_id = creds
 
     import urllib.request
     import uuid
@@ -333,7 +369,7 @@ def send_to_telegram(apk: Path) -> None:
 
     sep = "\r\n"
     parts = []
-    for name, value in (("chat_id", str(t.chat_id)), ("caption", caption)):
+    for name, value in (("chat_id", chat_id), ("caption", caption)):
         parts.append(
             (f"--{boundary}{sep}"
              f'Content-Disposition: form-data; name="{name}"{sep}{sep}'
@@ -348,7 +384,7 @@ def send_to_telegram(apk: Path) -> None:
     parts.append(f"{sep}--{boundary}--{sep}".encode("utf-8"))
     body = b"".join(parts)
 
-    url = f"https://api.telegram.org/bot{t.bot_token}/sendDocument"
+    url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
     try:

@@ -70,6 +70,20 @@ def client():
     return TelegramClient(str(SESSION), api_id, api_hash)
 
 
+def _where(code_type) -> str:
+    """Telegram kodni qayerga yuborganini tushunarli qilib aytadi."""
+    name = type(code_type).__name__
+    return {
+        "SentCodeTypeApp": "TELEGRAM ILOVASIGA — «Telegram» nomli rasmiy chatga",
+        "SentCodeTypeSms": "SMS orqali telefon raqamiga",
+        "SentCodeTypeCall": "qo'ng'iroq qilinadi, kod ovoz bilan aytiladi",
+        "SentCodeTypeFlashCall": "qisqa qo'ng'iroq (raqamning oxirgi raqamlari kod)",
+        "SentCodeTypeMissedCall": "javobsiz qo'ng'iroq (raqamning oxirgi raqamlari kod)",
+        "SentCodeTypeEmailCode": "elektron pochtaga",
+        "SentCodeTypeFragmentSms": "Fragment xizmati orqali",
+    }.get(name, name)
+
+
 async def do_request(phone: str) -> int:
     c = client()
     await c.connect()
@@ -83,12 +97,46 @@ async def do_request(phone: str) -> int:
             "phone": phone,
             "hash": sent.phone_code_hash,
         }), encoding="utf-8")
+
+        # Telegram kodni qayerga yuborganini o'zi aytadi. Buni
+        # ko'rsatmasak, kod kelmaganda qayerni qidirishni bilib
+        # bo'lmaydi - eng ko'p vaqt shu joyda yo'qoladi.
         print("Kod yuborildi.")
-        print("Diqqat: kod SMS emas, TELEGRAM ILOVASIGA keladi —")
-        print('"Telegram" nomli rasmiy chatni oching.')
+        print(f"  qayerga:  {_where(sent.type)}")
+        if getattr(sent, "next_type", None) is not None:
+            print(f"  qayta so'ralsa: {_where(sent.next_type)}")
         print()
         print("Keyingi qadam:  telegram_relogin.py code <KOD>")
         return 0
+    finally:
+        await c.disconnect()
+
+
+async def do_resend() -> int:
+    """Kodni boshqa yo'l bilan qayta yuboradi.
+
+    Ilovaga kelgan kod ko'rinmasa yoki umuman kelmasa - SMS'ga
+    majburlaymiz. Telegram har doim ham rozi bo'lavermaydi, lekin
+    urinib ko'rish arziydi.
+    """
+    if not STATE.exists():
+        print("Avval kod so'ralmagan. Ishga tushiring: request <telefon>")
+        return 2
+    state = json.loads(STATE.read_text(encoding="utf-8"))
+    c = client()
+    await c.connect()
+    try:
+        sent = await c.send_code_request(state["phone"], force_sms=True)
+        STATE.write_text(json.dumps({
+            "phone": state["phone"],
+            "hash": sent.phone_code_hash,
+        }), encoding="utf-8")
+        print("Kod qayta yuborildi.")
+        print(f"  qayerga:  {_where(sent.type)}")
+        return 0
+    except Exception as exc:
+        print(f"Qayta yuborilmadi: {type(exc).__name__}: {exc}")
+        return 1
     finally:
         await c.disconnect()
 
@@ -169,6 +217,8 @@ def main() -> int:
     arg = sys.argv[2] if len(sys.argv) > 2 else ""
     if cmd == "request" and arg:
         return asyncio.run(do_request(arg))
+    if cmd == "resend":
+        return asyncio.run(do_resend())
     if cmd == "code" and arg:
         return asyncio.run(do_code(arg.strip().replace(" ", "")))
     if cmd == "password" and arg:
