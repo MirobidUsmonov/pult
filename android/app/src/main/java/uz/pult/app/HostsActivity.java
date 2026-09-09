@@ -3,6 +3,7 @@ package uz.pult.app;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ClipboardManager;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.media.projection.MediaProjectionManager;
@@ -45,6 +46,8 @@ public class HostsActivity extends Activity {
     private Hosts hosts;
     private LinearLayout list;
     private Hosts.Host pendingShare;
+    /** Sozlamalarga ruxsat so'rab yuborilgan kompyuter. */
+    private Hosts.Host pendingAccess;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -72,6 +75,16 @@ public class HostsActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refresh();
+
+        // Sozlamalardan ruxsat berib qaytdi - to'xtagan joyidan davom
+        // etamiz. Aks holda odam yana kartaga qaytib, ⇧ ni qaytadan
+        // bosishi kerak bo'lardi va nima uchunligi tushunarsiz qolardi.
+        if (pendingAccess != null && InputService.get() != null) {
+            Hosts.Host h = pendingAccess;
+            pendingAccess = null;
+            Toast.makeText(this, "Ruxsat berildi", Toast.LENGTH_SHORT).show();
+            requestProjection(h);
+        }
     }
 
     // ------------------------------------------------------------ tartib
@@ -243,24 +256,65 @@ public class HostsActivity extends Activity {
     private void askForAccessibility(Hosts.Host h) {
         new AlertDialog.Builder(this)
                 .setTitle("Boshqarish uchun ruxsat kerak")
-                .setMessage("Kompyuter telefonga bosishi uchun Android "
-                        + "sozlamalarida «Maxsus imkoniyatlar» bo‘limidan "
-                        + "Pult xizmatini yoqing.\n\n"
+                .setMessage("Kompyuter telefonga bosishi uchun «Pult — "
+                        + "telefonni boshqarish» xizmatini yoqish kerak.\n\n"
+                        + "Tugmani bossangiz o‘sha sahifa ochiladi — "
+                        + "shunchaki yoqib, orqaga qayting.\n\n"
                         + "Bu Android himoyasi: hech bir ilova boshqa "
                         + "ilovalarga o‘zicha bosa olmaydi.\n\n"
                         + "Faqat ekranni ko‘rsatmoqchi bo‘lsangiz, "
                         + "yoqmasdan ham davom etish mumkin.")
-                .setPositiveButton("Sozlamalarni ochish", (d, w) -> {
-                    try {
-                        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
-                    } catch (Exception e) {
-                        Toast.makeText(this, "Sozlamalarni ochib bo‘lmadi",
-                                Toast.LENGTH_LONG).show();
-                    }
+                .setPositiveButton("Yoqish", (d, w) -> {
+                    // Qaytib kelganda ishni o'zi davom ettirsin
+                    pendingAccess = h;
+                    openAccessibilitySettings();
                 })
                 .setNeutralButton("Faqat ko‘rsatish", (d, w) -> requestProjection(h))
                 .setNegativeButton("Bekor", null)
                 .show();
+    }
+
+    /**
+     * Pult xizmatining sozlamalar sahifasini ochadi.
+     *
+     * Oddiy ACTION_ACCESSIBILITY_SETTINGS umumiy ro'yxatni ochadi va
+     * odam Pult'ni o'sha ro'yxatdan qidirishi kerak bo'ladi - ba'zi
+     * telefonlarda u "Yuklab olingan xizmatlar" ichida yashiringan
+     * bo'ladi va topib bo'lmaydi.
+     *
+     * Uchta yo'l, shu tartibda: xizmatning o'z sahifasi (Android 12+),
+     * ro'yxat ichida kerakli qatorni ajratib ko'rsatish, va oxirida
+     * oddiy ro'yxat.
+     */
+    private void openAccessibilitySettings() {
+        String service = new ComponentName(this, InputService.class).flattenToString();
+
+        // Doimiy nomlar o'rniga satrlar: shunda eskiroq SDK bilan
+        // yig'ilganda ham kompilyatsiya buzilmaydi
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            Intent direct = new Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS");
+            direct.putExtra("android.intent.extra.COMPONENT_NAME", service);
+            if (tryStart(direct)) return;
+        }
+
+        Intent highlighted = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+        Bundle args = new Bundle();
+        args.putString(":settings:fragment_args_key", service);
+        highlighted.putExtra(":settings:fragment_args_key", service);
+        highlighted.putExtra(":settings:show_fragment_args", args);
+        if (tryStart(highlighted)) return;
+
+        if (tryStart(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))) return;
+        Toast.makeText(this, "Sozlamalarni ochib bo‘lmadi", Toast.LENGTH_LONG).show();
+    }
+
+    private boolean tryStart(Intent intent) {
+        try {
+            startActivity(intent);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private void stopShare() {
