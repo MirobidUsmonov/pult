@@ -69,6 +69,17 @@ public class ScreenService extends Service {
     private int outW, outH;
     private String hostName = "Telefon";
 
+    // Ulanish ma'lumotlari saqlanadi: uzilganda qayta ulanish kerak
+    private String baseUrl, token, pin;
+    private int attempt = 0;
+    /** Foydalanuvchi to'xtatganmi. Shunda qayta ulanmaymiz. */
+    private volatile boolean stopped = false;
+
+    // Ekran o'chganda tizim protsessorni va Wi-Fi ni uxlatadi -
+    // ulanish uziladi. Qulflar shuni to'xtatadi.
+    private android.os.PowerManager.WakeLock wakeLock;
+    private android.net.wifi.WifiManager.WifiLock wifiLock;
+
     private final Handler main = new Handler(Looper.getMainLooper());
 
     @Override
@@ -115,6 +126,9 @@ public class ScreenService extends Service {
         }
 
         running = true;
+        stopped = false;
+        attempt = 0;
+        holdLocks();
         // Manzilni shu yerda tanlaymiz, ro'yxatdagi yozuvdan emas:
         // ekran uzatish uzoq davom etadi va sekin yo'ldan ketishi
         // ayniqsa qimmatga tushadi. Tekshiruv tarmoq ishi bo'lgani
@@ -143,12 +157,37 @@ public class ScreenService extends Service {
 
     // ------------------------------------------------------------ ulanish
 
+    /** Uzilgan ulanishni qayta tiklaydi - vaqti asta uzayadi. */
+    private void scheduleReconnect(String reason) {
+        attempt++;
+        // Umuman tiklanmasa ham cheksiz urinmaymiz: Android tepada
+        // "ekran uzatilmoqda" belgisini ko'rsatib turadi va hech narsa
+        // uzatilmayotgan bo'lsa bu faqat chalg'itadi.
+        if (attempt > 20) {
+            stopEverything();
+            doneNotice("Aloqa tiklanmadi — ekran uzatish to‘xtadi");
+            return;
+        }
+        long delay = Math.min(1000L * attempt, 15000L);
+        notice("Aloqa uzildi, qayta ulanmoqda… (" + reason + ")");
+        Log.i(TAG, "qayta ulanish " + attempt + ", " + delay + " ms dan keyin");
+        main.postDelayed(() -> {
+            if (!running || stopped) return;
+            connect(baseUrl, token, pin);
+        }, delay);
+    }
+
     private void connect(String base, String token, String pin) {
+        this.baseUrl = base;
+        this.token = token;
+        this.pin = pin;
         String wsUrl = base.replaceFirst("^http", "ws") + "/ws?k=" + android.net.Uri.encode(token);
         ws = new WsClient(wsUrl, pin, new WsClient.Listener() {
             @Override
             public void onOpen() {
                 Log.i(TAG, "kompyuterga ulandi");
+                attempt = 0;
+                notice("Kompyuterga ulandi");
                 sendHello();
             }
 
@@ -160,16 +199,15 @@ public class ScreenService extends Service {
             @Override
             public void onClosed(String reason) {
                 Log.i(TAG, "ulanish yopildi: " + reason);
-                // Ulanish o'z-o'zidan tiklanmaydi, shuning uchun
-                // ekranni ushlab turishning ma'nosi yo'q. Ilgari
-                // xizmat ishlab qolaverar va Android tepada "ekran
-                // uzatilmoqda" degan qizil ko'rsatkichni ko'rsatib
-                // turaverardi - hech narsa uzatilmayotgan bo'lsa ham.
-                if (!running) return;
+                if (!running || stopped) return;
+                // Uzilish ko'pincha vaqtinchalik: telefon ekrani
+                // o'chganda tarmoq bir lahzaga uxlaydi. Darhol
+                // to'xtatib qo'ysak, ekranni bir marta o'chirib
+                // yoqishning o'zi uzatishni butunlay tugatardi.
                 main.post(() -> {
-                    if (!running) return;
-                    stopEverything();
-                    doneNotice("Aloqa uzildi — ekran uzatish to‘xtadi");
+                    if (!running || stopped) return;
+                    stopStream();
+                    scheduleReconnect(reason);
                 });
             }
         });
@@ -546,8 +584,61 @@ public class ScreenService extends Service {
         }
     }
 
+    /**
+     * Ekran o'chganda ham ishlashda davom etish uchun qulflar.
+     *
+     * Telefon ekrani o'chishi bilan tizim protsessorni to'xtatadi va
+     * Wi-Fi ni uxlatadi - ulanish uziladi. Bu qulflar shuni to'xtatadi.
+     * Ular batareyani ko'proq yeydi, lekin ekran uzatish allaqachon
+     * batareya yeydigan ish va u faqat foydalanuvchi yoqqanda ishlaydi.
+     *
+     * Diqqat: bu ekranni yoqib turmaydi - Android bunga ruxsat
+     * bermaydi. Ekran o'chgan payt kompyuterga qora tasvir borishi
+     * mumkin, lekin ULANISH uzilmaydi va ekran yonishi bilan tasvir
+     * qaytadi.
+     */
+    private void holdLocks() {
+        try {
+            if (wakeLock == null) {
+                android.os.PowerManager pm =
+                        (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+                wakeLock = pm.newWakeLock(
+                        android.os.PowerManager.PARTIAL_WAKE_LOCK, "pult:ekran");
+                wakeLock.setReferenceCounted(false);
+            }
+            if (!wakeLock.isHeld()) wakeLock.acquire();
+        } catch (Exception e) {
+            Log.w(TAG, "protsessor qulfi olinmadi: " + e);
+        }
+        try {
+            if (wifiLock == null) {
+                android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
+                        getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                wifiLock = wm.createWifiLock(
+                        android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "pult:ws");
+                wifiLock.setReferenceCounted(false);
+            }
+            if (!wifiLock.isHeld()) wifiLock.acquire();
+        } catch (Exception e) {
+            Log.w(TAG, "Wi-Fi qulfi olinmadi: " + e);
+        }
+    }
+
+    private void releaseLocks() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        } catch (Exception ignored) {
+        }
+        try {
+            if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
+        } catch (Exception ignored) {
+        }
+    }
+
     private void stopEverything() {
         running = false;
+        stopped = true;
+        releaseLocks();
         stopStream();
         if (ws != null) {
             ws.close();
