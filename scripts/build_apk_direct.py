@@ -269,10 +269,75 @@ def build(tools: Tools, out_dir: Path) -> Path:
     return final
 
 
+def send_to_telegram(apk: Path) -> None:
+    """Yig'ilgan APK'ni Telegram'ga yuboradi.
+
+    Bot sozlamalari Pult'nikidan olinadi (python -m pult --telegram bilan
+    sozlanadi), shuning uchun alohida sozlash kerak emas.
+
+    Diqqat: bot Telegram'dagi "Saqlangan xabarlar"ga yoza olmaydi - u
+    foydalanuvchining o'z akkaunti chati va botlar unga kira olmaydi.
+    Fayl bot bilan bo'lgan chatga tushadi, u yerdan bir bosishda
+    Saqlanganlarga yuborish mumkin.
+    """
+    sys.path.insert(0, str(ROOT))
+    try:
+        from pult import config as cfgmod
+    except Exception as exc:
+        say(f"  Telegram: sozlamalarni o'qib bo'lmadi ({exc})")
+        return
+
+    cfg = cfgmod.load()
+    t = cfg.telegram
+    if not (t.bot_token and t.chat_id):
+        say("  Telegram sozlanmagan - o'tkazib yuborildi")
+        say("  Sozlash uchun:  python -m pult --telegram <BOT_TOKEN>")
+        return
+
+    import urllib.request
+    import uuid
+
+    boundary = uuid.uuid4().hex
+    data = apk.read_bytes()
+    caption = f"Pult {VERSION_NAME} — {len(data) / 1024:.0f} KB"
+
+    sep = "\r\n"
+    parts = []
+    for name, value in (("chat_id", str(t.chat_id)), ("caption", caption)):
+        parts.append(
+            (f"--{boundary}{sep}"
+             f'Content-Disposition: form-data; name="{name}"{sep}{sep}'
+             f"{value}{sep}").encode("utf-8")
+        )
+    parts.append(
+        (f"--{boundary}{sep}"
+         f'Content-Disposition: form-data; name="document"; filename="{apk.name}"{sep}'
+         f"Content-Type: application/vnd.android.package-archive{sep}{sep}").encode("utf-8")
+    )
+    parts.append(data)
+    parts.append(f"{sep}--{boundary}--{sep}".encode("utf-8"))
+    body = b"".join(parts)
+
+    url = f"https://api.telegram.org/bot{t.bot_token}/sendDocument"
+    req = urllib.request.Request(url, data=body, method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    try:
+        with urllib.request.urlopen(req, timeout=180) as response:
+            ok = b'"ok":true' in response.read()
+        say("  Telegram: yuborildi" if ok else "  Telegram: qabul qilinmadi")
+    except Exception as exc:
+        # Yuborilmagani yig'ishni buzmasligi kerak
+        say(f"  Telegram: yuborilmadi ({exc})")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Pult APK - Gradle'siz yig'ish")
     ap.add_argument("--tools", default="E:\\dev-tools", help="asboblar papkasi")
     ap.add_argument("--out", default=str(PROJECT / "dist"), help="natija papkasi")
+    ap.add_argument("--telegram", action="store_true",
+                    help="yig'ilgach APK'ni Telegram'ga yuborish")
+    ap.add_argument("--desktop", action="store_true",
+                    help="yig'ilgach ish stoliga nusxalash")
     args = ap.parse_args()
 
     tools = Tools(Path(args.tools))
@@ -297,6 +362,18 @@ def main() -> int:
     print()
     print(f"Tayyor: {apk}")
     print(f"Hajmi:  {size:.1f} MB")
+
+    if args.desktop:
+        try:
+            desktop = Path.home() / "Desktop"
+            if desktop.is_dir():
+                shutil.copy2(apk, desktop / apk.name)
+                say(f"  Ish stoliga nusxalandi: {desktop / apk.name}")
+        except Exception as e:
+            say(f"  Ish stoliga nusxalanmadi ({e})")
+
+    if args.telegram:
+        send_to_telegram(apk)
     return 0
 
 
