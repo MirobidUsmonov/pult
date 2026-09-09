@@ -257,6 +257,69 @@ def adopt(source: Path, data: Path) -> bool:
     return True
 
 
+def stop_running(target_dir: Path) -> None:
+    """O'sha papkadan ishlab turgan hamma narsani to'xtatadi.
+
+    Windows ishlab turgan .exe ustiga yozishga ruxsat bermaydi, shuning
+    uchun qayta o'rnatish oldin uni to'xtatmasa "Access is denied"
+    beradi. Bu qayta o'rnatishda doim uchraydigan holat: dastur
+    avtomatik ishga tushgan va o'sha payt ishlab turibdi.
+
+    cloudflared ham to'xtatiladi - u dastur ishga tushirgan yordamchi
+    va yangi nusxa o'zinikini ochadi.
+    """
+    if sys.platform != "win32":
+        return
+
+    _powershell(
+        f"Stop-ScheduledTask -TaskName {_ps_quote(TASK_NAME)} "
+        "-ErrorAction SilentlyContinue"
+    )
+    _powershell(
+        f"$dir={_ps_quote(str(target_dir))};"
+        "Get-CimInstance Win32_Process |"
+        " Where-Object { $_.ExecutablePath -and"
+        " $_.ExecutablePath.StartsWith($dir, 'OrdinalIgnoreCase') } |"
+        " ForEach-Object { Stop-Process -Id $_.ProcessId -Force"
+        " -ErrorAction SilentlyContinue }"
+    )
+
+
+def _replace_exe(src: Path, target: Path) -> None:
+    """Dastur faylini almashtiradi, band bo'lsa ham.
+
+    Jarayon to'xtatilgach ham fayl bir necha yuz millisekund band
+    qolishi mumkin, shuning uchun bir necha marta urinamiz. Baribir
+    bo'lmasa eskisini chetga suramiz: Windows ishlab turgan faylni
+    o'chirishga ruxsat bermaydi, lekin NOMINI O'ZGARTIRISHGA beradi.
+    """
+    import time
+
+    if src.resolve() == target:
+        return
+
+    last: Exception | None = None
+    for _ in range(10):
+        try:
+            shutil.copy2(src, target)
+            return
+        except PermissionError as exc:
+            last = exc
+            time.sleep(0.4)
+
+    old = target.with_name(target.name + ".eski")
+    try:
+        old.unlink(missing_ok=True)
+    except OSError:
+        # Oldingi o'rnatishdan qolgan va hali band bo'lishi mumkin
+        old = target.with_name(f"{target.name}.eski-{os.getpid()}")
+    target.rename(old)
+    shutil.copy2(src, target)
+    log.info("eski fayl chetga surildi: %s", old)
+    if last:
+        log.info("(band edi: %s)", last)
+
+
 def install(quiet: bool = False) -> tuple[bool, str]:
     """Dasturni doimiy joyga o'rnatadi. (muvaffaqiyat, xabar)"""
     exe = frozen_exe()
@@ -268,17 +331,19 @@ def install(quiet: bool = False) -> tuple[bool, str]:
     target = target_dir / EXE_NAME
     data = target_dir / "data"
 
+    # Qayta o'rnatishda eski nusxa ishlab turgan bo'ladi - uni
+    # to'xtatmasak fayl band bo'lib qoladi
+    if target.exists():
+        stop_running(target_dir)
+
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
         data.mkdir(exist_ok=True)
         (data / "bin").mkdir(exist_ok=True)
 
         # O'rnatgich ichida yengil Pult.exe bo'lsa - o'shani qo'yamiz.
-        # Bo'lmasa dastur o'zini ko'chiradi (Windows ishlab turgan
-        # faylni o'qishga ruxsat beradi, faqat yozishga bermaydi).
-        src = bundled(EXE_NAME) or exe
-        if src.resolve() != target:
-            shutil.copy2(src, target)
+        # Bo'lmasa dastur o'zini ko'chiradi.
+        _replace_exe(bundled(EXE_NAME) or exe, target)
 
         # Yordamchi dasturlar .exe ichida bo'lsa - yoniga chiqaramiz.
         # Ular har ishga tushganda vaqtinchalik papkaga ochilmasin:
@@ -288,7 +353,12 @@ def install(quiet: bool = False) -> tuple[bool, str]:
             if src and not (data / "bin" / name).exists():
                 shutil.copy2(src, data / "bin" / name)
     except Exception as exc:
-        return False, f"Fayllarni ko'chirib bo'lmadi:\n{exc}"
+        return False, (
+            f"Fayllarni ko'chirib bo'lmadi:\n{type(exc).__name__}: {exc}\n\n"
+            f"Papka: {target_dir}\n\n"
+            "Pult ishlab tursa uni treydan chiqaring va qaytadan urinib "
+            "ko'ring."
+        )
 
     # Sozlamalar shu yerda yaratilsin
     os.environ["PULT_CONFIG_DIR"] = str(data)
@@ -320,6 +390,14 @@ def install(quiet: bool = False) -> tuple[bool, str]:
     # tayanadi va uni shu jarayonda o'zgartirganimiz keyinroq
     # chalkashlik tug'dirishi mumkin
     cfgmod.save(cfg, data / "config.json")
+
+    # Oldingi almashtirishdan qolgan fayllar. Endi ular band emas,
+    # shuning uchun shu payt o'chirish mumkin.
+    for stale in target_dir.glob(EXE_NAME + ".eski*"):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
 
     ok_task = register_task(target)
 
