@@ -67,6 +67,18 @@ def pair_url(cfg: cfgmod.Config) -> str:
     return f"{scheme}://127.0.0.1:{cfg.port}/pair?k={cfg.token}"
 
 
+def viewer_url(cfg: cfgmod.Config) -> str:
+    """Telefon ekranini kompyuter monitorida ko'rish uchun havola.
+
+    Sahifa telefondagining o'zi, faqat "view=phone" belgisi bilan:
+    ulangan telefon paydo bo'lishi bilan o'sha manba tanlanadi.
+    Telefon hali ulanmagan bo'lsa sahifa nima qilish kerakligini
+    yozib kutib turadi.
+    """
+    scheme = "http" if cfg.tls == "off" else "https"
+    return f"{scheme}://127.0.0.1:{cfg.port}/#k={cfg.token}&view=phone"
+
+
 def phone_url(cfg: cfgmod.Config) -> str:
     """Telefonga beriladigan havola.
 

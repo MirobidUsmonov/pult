@@ -376,3 +376,34 @@ html, body {
   text-align: center;
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------- kompyuter brauzeri ---------- */
+
+/* Sahifa telefonda ham, monitorda ham ochiladi. Monitorda barmoq
+   uchun qilingan qismlar ortiqcha: pastdagi tugmalar qatori sichqoncha
+   bilan ishlaganda faqat joyni egallaydi, klavishlar qatori esa
+   haqiqiy klaviatura borida umuman kerak emas.
+
+   Buni JavaScript emas, @media hal qiladi: oyna o'lchami o'zgarganda
+   qoida o'zi qayta hisoblanadi. Bir marta hisoblab, sinfni body'ga
+   yozib qo'yish ishonchsiz - sahifa yuklanayotgan paytda o'lcham hali
+   noto'g'ri bo'lishi mumkin va rejim shu xato bilan qotib qoladi. */
+@media (pointer: fine) and (min-width: 700px) {
+  #toolbar,
+  #keyrow { display: none; }
+
+  #stage { bottom: 0; }
+
+  /* "Telefon ulanmagan" ko'rsatmasi bir necha qatordan iborat -
+     qatorlar saqlanishi va joy kengroq bo'lishi kerak. */
+  .ph-text {
+    max-width: 420px;
+    font-size: 14px;
+    white-space: pre-line;
+  }
+
+  /* Barmoq uchun mo'ljallangan o'lchamlar sichqoncha bilan kichik
+     ko'rinadi. Faqat yozuvni kattalashtiramiz - qator balandligi
+     --bar o'zgaruvchisiga bog'liq, unga tegmaymiz. */
+  .chip { font-size: 13px; }
+}

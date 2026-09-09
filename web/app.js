@@ -12,6 +12,23 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const KEY_STORE = "pult.key";
 const PREF_STORE = "pult.prefs";
 
+/* Havoladagi "view=phone" - ulangan telefonni o'zi tanlash so'rovi.
+ * Kompyuter treyidagi "Telefon ekranini ko'rish" shu belgi bilan ochadi.
+ * readToken() manzil qatorini tozalagani uchun bu qiymat undan OLDIN
+ * o'qilishi shart. */
+const wantView = (location.hash.match(/[#&]view=([^&]+)/) || [])[1] || "";
+
+/* Sahifa telefonda ham, kompyuter brauzerida ham ochiladi. Kompyuterda
+ * boshqacha ko'rinish kerak: barmoq imo-ishoralari o'rniga sichqoncha,
+ * ekrandagi tugmalar qatori o'rniga haqiqiy klaviatura.
+ *
+ * Ko'rinish CSS'dagi @media orqali o'zgaradi, bu yerda esa faqat
+ * xatti-harakat uchun so'rov saqlanadi. Muhimi: qiymat OLDINDAN
+ * hisoblanmaydi. Sahifa yuklanayotganda oyna o'lchami hali noto'g'ri
+ * bo'lishi mumkin va bir marta hisoblangan qiymat shu xato bilan
+ * qotib qolardi. */
+const deskQuery = matchMedia("(pointer: fine) and (min-width: 700px)");
+
 /* ---------------------------------------------------------------- kalit */
 
 function readToken() {
@@ -20,9 +37,16 @@ function readToken() {
     const t = decodeURIComponent(m[1]);
     localStorage.setItem(KEY_STORE, t);
     // Kalitni manzil qatorida qoldirmaymiz: brauzer tarixida va ekran
-    // suratlarida ko'rinib qolmasligi uchun. So'rov qismi saqlanadi -
-    // u yerda kalitdan boshqa narsalar bo'lishi mumkin.
-    history.replaceState(null, "", location.pathname + location.search);
+    // suratlarida ko'rinib qolmasligi uchun. Faqat kalit olib
+    // tashlanadi - qolgan belgilar (masalan view=phone) sir emas va
+    // saqlanishi shart, aks holda sahifa yangilanganda so'rov
+    // yo'qolib, ko'rinish boshqa manbaga qaytib ketardi.
+    const rest = location.hash.replace(/^#/, "").split("&")
+      .filter((p) => p && !p.startsWith("k="));
+    history.replaceState(
+      null, "",
+      location.pathname + location.search + (rest.length ? "#" + rest.join("&") : "")
+    );
     return t;
   }
   return localStorage.getItem(KEY_STORE) || "";
@@ -290,10 +314,14 @@ link.onJson = (msg) => {
     if (msg.stream && typeof msg.stream.follow_cursor === "boolean") {
       $("chkFollow").checked = msg.stream.follow_cursor;
     }
+    // Telefonni so'ragan bo'lsak - oqim boshlanishidan oldin tanlaymiz,
+    // shunda kompyuter ekrani bekorga bir marta yoqilmaydi.
+    autoPickSource(true);
     buildMonitors(host.monitors);
     buildMonbar();
     buildToolMid();
     buildSources();
+    updateHostLabel();
     buildCommands(host.commands || []);
     applyPrefsToUi();
     if (!decoder.supported) {
@@ -302,6 +330,13 @@ link.onJson = (msg) => {
         "Android’da Chrome, iPhone’da iOS 17+ Safari kerak.",
         null
       );
+      return;
+    }
+    // Telefon so'ralgan, lekin hali ulanmagan - kutamiz. Kompyuter
+    // ekranini yoqish bu yerda zararli: sahifa kompyuterning o'zida
+    // ochilgani uchun ekran o'zini o'zi cheksiz aks ettiradi.
+    if (wantView === "phone" && !autoPicked) {
+      updateWaiting();
       return;
     }
     startStream();
@@ -318,7 +353,11 @@ link.onJson = (msg) => {
     $("infoSize").textContent = `${msg.w}×${msg.h} · ${msg.fps} k/s`;
     if (msg.codec) decoder.configure(msg.codec);
   } else if (msg.t === "stats") {
-    $("stats").textContent = `${msg.fps} k/s · ${fmtRate(msg.kbps)}`;
+    // Oqim yo'q bo'lsa raqamlarni ko'rsatmaymiz: server oxirgi
+    // qiymatlarni yuborishda davom etadi va ular ekranda "ishlayapti"
+    // degan yolg'on taassurot qoldirardi.
+    $("stats").textContent = streaming
+      ? `${msg.fps} k/s · ${fmtRate(msg.kbps)}` : "";
     $("infoRtt").textContent = link.rtt ? `${link.rtt} ms` : "—";
   } else if (msg.t === "error") {
     toast(msg.msg);
@@ -329,12 +368,18 @@ link.onJson = (msg) => {
   } else if (msg.t === "sources") {
     sources = msg.list || [];
     buildSources();
+    autoPickSource(false);
+    updateWaiting();
   } else if (msg.t === "source_gone") {
     toast("Manba uzildi");
     currentSource = "local";
+    // Yana telefon ulansa o'zi qaytib tanlansin
+    autoPicked = false;
     buildSources();
     buildToolMid();
+    updateHostLabel();
     startStream();
+    updateWaiting();
   }
 };
 
@@ -1105,6 +1150,44 @@ stage.addEventListener("wheel", (e) => {
   link.send({ t: "scroll", dy: -e.deltaY / 100 });
 }, { passive: false });
 
+/* Kompyuter brauzerida haqiqiy klaviatura ishlaydi: bosilgan klavish
+ * narigi tomonga uzatiladi. Telefonda bu kerak emas - u yerda ekrandagi
+ * tugmalar qatori bor, va telefon klaviaturasi keydown'da harflarni
+ * ishonchli bermaydi. */
+const DESK_KEYS = new Set([
+  "Enter", "Backspace", "Tab", "Escape", "Delete", "Home", "End",
+  "PageUp", "PageDown", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
+  "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12",
+]);
+
+addEventListener("keydown", (e) => {
+  if (!deskQuery.matches) return;
+  // Sozlamalardagi maydonlarga yozayotgan bo'lsa - tegmaymiz
+  const el = document.activeElement;
+  if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
+  if (!streaming) return;
+
+  const mods = [];
+  if (e.ctrlKey) mods.push("ctrl");
+  if (e.altKey) mods.push("alt");
+  if (e.shiftKey) mods.push("shift");
+  if (e.metaKey) mods.push("win");
+
+  // F5 va Ctrl+R sahifani yangilab yuborardi - narigi tomonga ketsin
+  if (mods.length && (e.key.length === 1 || DESK_KEYS.has(e.key))) {
+    e.preventDefault();
+    link.send({ t: "combo", keys: [...mods, e.key.toLowerCase()] });
+  } else if (DESK_KEYS.has(e.key)) {
+    e.preventDefault();
+    link.send({ t: "key", a: "tap", k: e.key });
+  } else if (e.key.length === 1) {
+    // Bitta belgi - matn sifatida yuboramiz: shunda unicode va
+    // o'zbek harflari ham to'g'ri tushadi.
+    e.preventDefault();
+    link.send({ t: "text", s: e.key });
+  }
+});
+
 /* -------------------------------------------------------- tugmalar */
 
 $("btnDouble").addEventListener("click", () => {
@@ -1151,6 +1234,16 @@ async function toggleFullscreen() {
   }
   setTimeout(refreshView, 200);
 }
+
+// Manbani almashtirish: ro'yxat bo'ylab aylanadi. Ikkitadan ko'p
+// manba bo'lsa sozlamalardagi to'liq ro'yxat qulayroq, lekin odatiy
+// holat - "kompyuter <-> telefon", unga bitta bosish yetadi.
+$("btnSource").addEventListener("click", () => {
+  const list = sourceList();
+  if (list.length < 2) return;
+  const i = list.findIndex((s) => s.id === currentSource);
+  selectSource(list[(i + 1) % list.length].id);
+});
 
 $("btnRotate").addEventListener("click", toggleRotate);
 $("btnRotate2").addEventListener("click", toggleRotate);
@@ -1286,11 +1379,15 @@ function sourceLabel(src) {
   return src.kind === "pc" ? `💻 ${src.name}` : `📱 ${src.name}`;
 }
 
+function sourceList() {
+  return sources.length ? sources
+    : [{ id: "local", name: (host && host.name) || "Kompyuter", kind: "pc" }];
+}
+
 function buildSources() {
   const row = $("sourceRow");
   row.innerHTML = "";
-  const list = sources.length ? sources
-    : [{ id: "local", name: (host && host.name) || "Kompyuter", kind: "pc" }];
+  const list = sourceList();
   list.forEach((src) => {
     const b = document.createElement("button");
     b.className = "btn" + (currentSource === src.id ? " on" : "");
@@ -1301,6 +1398,46 @@ function buildSources() {
   // Ekran tanlash faqat kompyuterda ma'noga ega - telefonda bitta ekran
   $("monitorSection").hidden = currentSource !== "local";
   $("sourceHint").hidden = list.length > 1;
+
+  // Manba tugmasi yuqori qatorda ham turadi. Ilgari u faqat
+  // sozlamalar ichida edi va telefonni kompyuterda ko'rish yo'lini
+  // topib bo'lmasdi - ko'rinmagan imkoniyat yo'q imkoniyat bilan teng.
+  const chip = $("btnSource");
+  chip.hidden = list.length < 2;
+  if (!chip.hidden) {
+    const cur = list.find((s) => s.id === currentSource) || list[0];
+    chip.textContent = sourceLabel(cur);
+  }
+}
+
+/* Telefon so'ralgan, lekin hali ulanmagan bo'lsa - nima qilish
+ * kerakligini aytib turamiz. Bo'sh qora ekran hech narsa tushuntirmaydi. */
+function updateWaiting() {
+  if (wantView !== "phone" || autoPicked) return;
+  if (sources.some((s) => s.kind !== "pc")) return;
+  setPlaceholder(
+    "Telefon hali ulanmagan.\n\n" +
+    "Telefonda Pult ilovasini oching, kompyuterni tanlang va " +
+    "⇧ tugmasini bosing — ekran shu yerda chiqadi.",
+    null
+  );
+}
+
+/* view=phone bilan ochilganda ulangan telefonni o'zi tanlaydi.
+ * Telefon keyinroq ulansa ham ishlaydi: "sources" xabari kelganda
+ * yana tekshiriladi. */
+let autoPicked = false;
+function autoPickSource(quiet) {
+  if (autoPicked || wantView !== "phone") return false;
+  const phone = sources.find((s) => s.kind !== "pc");
+  if (!phone) return false;
+  autoPicked = true;
+  if (quiet) {
+    currentSource = phone.id;
+    return true;
+  }
+  selectSource(phone.id);
+  return true;
 }
 
 function selectSource(id) {
@@ -1313,7 +1450,11 @@ function selectSource(id) {
   buildMonbar();
   updateHostLabel();
   resetView();
-  link.send({ t: "view", on: true, source: id });
+  // startStream() ishlatiladi, chunki u sifat sozlamalarini ham
+  // yuboradi va "oqim yonyapti" holatini belgilaydi. Yalang'och
+  // "view" xabari kadrlarni keltirardi, lekin sozlamalar standart
+  // bo'lib qolar va klaviatura ishlamasdi.
+  startStream();
   const src = sources.find((x) => x.id === id);
   toast(src ? sourceLabel(src) : id);
 }

@@ -133,6 +133,7 @@ class TrayApp:
             pystray.MenuItem(self.cfg.host_name, None, enabled=False),
             pystray.Menu.SEPARATOR,
             item("Telefonni ulash (QR)", self.open_pair, default=True),
+            item("Telefon ekranini ko'rish", self.open_viewer),
             item("Havolani nusxalash", self.copy_link),
             pystray.Menu.SEPARATOR,
             item("Loglar", lambda: _open_path(cfgmod.log_path())),
@@ -143,6 +144,10 @@ class TrayApp:
 
     def open_pair(self) -> None:
         webbrowser.open(appmod.pair_url(self.cfg))
+
+    def open_viewer(self) -> None:
+        """Telefon ekranini kompyuter brauzerida ochadi."""
+        webbrowser.open(appmod.viewer_url(self.cfg))
 
     def copy_link(self) -> None:
         url = appmod.phone_url(self.cfg)
