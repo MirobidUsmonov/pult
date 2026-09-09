@@ -94,6 +94,7 @@ public class ScreenService extends Service {
             return START_NOT_STICKY;
         }
         if (ACTION_STOP.equals(intent.getAction())) {
+            report("foydalanuvchi to'xtatdi");
             stopEverything();
             return START_NOT_STICKY;
         }
@@ -119,6 +120,10 @@ public class ScreenService extends Service {
                     @Override
                     public void onStop() {
                         Log.i(TAG, "ekran olish tizim tomonidan to'xtatildi");
+                        // Sababni kompyuterga aytamiz: telefon logini
+                        // ko'rish uchun kabel va dasturchi rejimi
+                        // kerak, kompyuter logi esa doim qo'l ostida
+                        report("tizim ekran olishni to'xtatdi (MediaProjection.onStop)");
                         stopEverything();
                     }
                 }, main);
@@ -151,11 +156,32 @@ public class ScreenService extends Service {
 
     @Override
     public void onDestroy() {
+        // Xizmat tizim tomonidan o'ldirilayotgan bo'lishi mumkin -
+        // Samsung'da batareya tejash shunday qiladi. Sababni
+        // bilishning yagona yo'li shu xabar.
+        if (running) report("xizmat to'xtatilmoqda (onDestroy)");
         stopEverything();
         super.onDestroy();
     }
 
     // ------------------------------------------------------------ ulanish
+
+    /**
+     * Muhim voqeani kompyuterga aytadi - u kompyuter logida ko'rinadi.
+     *
+     * Telefonda nima bo'layotganini bilish qiyin: logini ko'rish uchun
+     * kabel va dasturchi rejimi kerak. Kompyuter logi esa doim
+     * ochiq, shuning uchun sabablar o'sha yerga yuboriladi.
+     */
+    private void report(String text) {
+        try {
+            if (ws != null) {
+                ws.sendText(new JSONObject().put("t", "note")
+                        .put("msg", text).toString());
+            }
+        } catch (Exception ignored) {
+        }
+    }
 
     /** Uzilgan ulanishni qayta tiklaydi - vaqti asta uzayadi. */
     private void scheduleReconnect(String reason) {

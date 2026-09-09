@@ -215,6 +215,18 @@ class ControllerSession:
             log.exception("xabarni qayta ishlashda kutilmagan xato: %s", msg)
             await self.send_json({"t": "error", "msg": str(exc)})
 
+    async def _on_note(self, msg: dict) -> None:
+        """Mijozning o'zi haqidagi xabari - logga tushadi.
+
+        Telefonda nima bo'layotganini bilishning oson yo'li yo'q:
+        loglarini ko'rish uchun kabel va dasturchi rejimi kerak.
+        Shuning uchun ilova muhim voqealarni (nega to'xtadi, nega
+        uzildi) shu yo'l bilan kompyuterga aytadi va ular kompyuter
+        logida ko'rinadi.
+        """
+        text = str(msg.get("msg") or "")[:300]
+        log.info("[%s] %s", self.name, text)
+
     async def _on_hello(self, msg: dict) -> None:
         self.name = str(msg.get("name") or self.name)[:64]
         self.role = str(msg.get("role") or "controller")[:32]

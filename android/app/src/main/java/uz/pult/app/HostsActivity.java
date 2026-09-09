@@ -56,6 +56,8 @@ public class HostsActivity extends Activity {
     private Hosts.Host pendingShare;
     /** Sozlamalarga ruxsat so'rab yuborilgan kompyuter. */
     private Hosts.Host pendingAccess;
+    /** Batareya istisnosi so'rab yuborilgan kompyuter. */
+    private Hosts.Host pendingBattery;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -83,6 +85,17 @@ public class HostsActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refresh();
+
+        // Batareya sozlamasidan qaytdi - to'xtagan joyidan davom etamiz
+        if (pendingBattery != null) {
+            Hosts.Host h = pendingBattery;
+            pendingBattery = null;
+            if (batteryFree()) {
+                Toast.makeText(this, "Ruxsat berildi", Toast.LENGTH_SHORT).show();
+            }
+            requestProjection(h);
+            return;
+        }
 
         // Sozlamalardan qaytdi - nima bo'lganini tekshiramiz
         if (pendingAccess != null) {
@@ -356,7 +369,55 @@ public class HostsActivity extends Activity {
             askForAccessibility(h);
             return;
         }
+        if (!batteryFree()) {
+            askBattery(h);
+            return;
+        }
         requestProjection(h);
+    }
+
+    /** Ilova batareya tejashdan ozod qilinganmi. */
+    private boolean batteryFree() {
+        try {
+            android.os.PowerManager pm =
+                    (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
+            return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+        } catch (Exception e) {
+            // Aniqlab bo'lmasa to'sqinlik qilmaymiz
+            return true;
+        }
+    }
+
+    /**
+     * Batareya tejashdan istisno so'raydi.
+     *
+     * Ekran o'chgach uzatish to'xtab qolishining eng ko'p uchraydigan
+     * sababi shu: tizim ilovani "uxlatadi" va xizmat o'ldiriladi.
+     * Buni ilova ichidan hal qilib bo'lmaydi - faqat foydalanuvchi
+     * ruxsat bera oladi. Majburiy emas: rad etsa ham uzatish
+     * ishlaydi, faqat ekran o'chganda uzilishi mumkin.
+     */
+    private void askBattery(Hosts.Host h) {
+        new AlertDialog.Builder(this)
+                .setTitle("Ekran o‘chganda ishlashi uchun")
+                .setMessage("Android batareyani tejash uchun ilovalarni "
+                        + "uxlatadi. Shunda ekran o‘chishi bilan uzatish "
+                        + "to‘xtab qoladi.\n\n"
+                        + "Tugmani bosing va «Ruxsat berish» ni tanlang.")
+                .setPositiveButton("Ruxsat so‘rash", (d, w) -> {
+                    Intent i = new Intent(
+                            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            Uri.fromParts("package", getPackageName(), null));
+                    if (!tryStart(i)) {
+                        // Ba'zi telefonlarda to'g'ridan-to'g'ri so'rash
+                        // yopiq - umumiy ro'yxatni ochamiz
+                        tryStart(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+                    }
+                    pendingBattery = h;
+                })
+                .setNeutralButton("Baribir davom etish", (d, w) -> requestProjection(h))
+                .setNegativeButton("Bekor", null)
+                .show();
     }
 
     /**
