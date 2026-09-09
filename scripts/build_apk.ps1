@@ -41,11 +41,30 @@ $gradleDir = Join-Path $Root "gradle-$GradleVersion"
 $gradleBin = Join-Path $gradleDir "bin\gradle.bat"
 if (-not (Test-Path $gradleBin)) {
     $zip = Join-Path $Root "downloads\gradle-$GradleVersion.zip"
+
+    # Arxiv yarim yuklangan bo'lishi mumkin (parallel yuklash yoki uzilish).
+    # Uni ochishga urinish tushunarsiz xato beradi, shuning uchun avval
+    # butunligini tekshiramiz.
+    if (Test-Path $zip) {
+        $valid = $false
+        try {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            $z = [System.IO.Compression.ZipFile]::OpenRead($zip)
+            $valid = $z.Entries.Count -gt 0
+            $z.Dispose()
+        } catch { $valid = $false }
+        if (-not $valid) {
+            Write-Host "Gradle arxivi to'liq emas, qayta yuklanadi"
+            Remove-Item $zip -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     if (-not (Test-Path $zip)) {
         Write-Host "Gradle $GradleVersion yuklanmoqda..."
         & curl.exe -L --fail --silent --show-error -o $zip $GradleUrl
         if ($LASTEXITCODE -ne 0) { throw "Gradle yuklab bo'lmadi" }
     }
+
     Write-Host "Gradle ochilmoqda..."
     $tmp = Join-Path $Root "_gradle_tmp"
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
