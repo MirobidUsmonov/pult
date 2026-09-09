@@ -184,7 +184,14 @@ def main() -> int:
         # Bitta nusxa bas. Kutish vaqti bor, chunki yangilanishdan
         # keyin eski nusxa chiqib ulgurmagan bo'lishi mumkin.
         if not single.acquire(timeout=20):
-            logging.info("boshqa nusxa allaqachon ishlayapti - chiqamiz")
+            # Ikkinchi nusxani jimgina yopish yaramaydi: odam ish
+            # stolidagi belgini bosganda hech narsa bo'lmagandek
+            # tuyuladi. Dastur allaqachon ishlayotgan bo'lsa,
+            # bosishning ma'nosi bitta - oynani ochish.
+            logging.info("boshqa nusxa ishlayapti - oynani ochamiz")
+            from . import window
+
+            window.open_url(appmod.viewer_url(cfg), size=(980, 720))
             return 0
 
         # Yangi versiya bo'lsa o'zini almashtirib qayta ishga tushadi.

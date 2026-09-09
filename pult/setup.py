@@ -174,6 +174,34 @@ def register_task(exe: Path) -> bool:
     return False
 
 
+def create_shortcut(exe: Path) -> bool:
+    """Ish stoliga dasturning yorlig'ini qo'yadi.
+
+    Yorliq o'rnatgichning o'rnini egallaydi: o'rnatgich bir marta
+    kerak bo'ladi, dastur esa doim. Bosilganda Pult oynasi ochiladi -
+    dastur allaqachon fonda ishlayotgani uchun ikkinchi nusxa
+    ko'tarilmaydi, shunchaki oyna chiqadi.
+    """
+    if sys.platform != "win32":
+        return False
+    script = (
+        "$ErrorActionPreference='Stop';"
+        "$desk=[Environment]::GetFolderPath('Desktop');"
+        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut("
+        "  (Join-Path $desk 'Pult.lnk'));"
+        f"$s.TargetPath={_ps_quote(exe)};"
+        f"$s.WorkingDirectory={_ps_quote(exe.parent)};"
+        f"$s.IconLocation={_ps_quote(exe)};"
+        "$s.Description='Pult - telefon va kompyuter';"
+        "$s.Save()"
+    )
+    r = _powershell(script)
+    if r.returncode != 0:
+        log.warning("yorliq yaratilmadi: %s", (r.stderr or r.stdout).strip()[:200])
+        return False
+    return True
+
+
 def remove_task() -> None:
     if sys.platform != "win32":
         return
@@ -407,6 +435,7 @@ def install(quiet: bool = False) -> tuple[bool, str]:
             pass
 
     ok_task = register_task(target)
+    create_shortcut(target)
 
     lines = [f"Pult o'rnatildi: {target_dir}"]
     if adopted:
