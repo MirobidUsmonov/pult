@@ -6,6 +6,7 @@ import android.content.ClipboardManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.media.projection.MediaProjectionConfig;
 import android.media.projection.MediaProjectionManager;
 import android.provider.Settings;
 import android.graphics.Typeface;
@@ -292,7 +293,24 @@ public class HostsActivity extends Activity {
         pendingShare = h;
         MediaProjectionManager mpm =
                 (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
-        startActivityForResult(mpm.createScreenCaptureIntent(), REQ_PROJECTION);
+
+        Intent intent;
+        if (android.os.Build.VERSION.SDK_INT >= 34) {
+            // Android 14 dan boshlab tizim "butun ekran" yoki "bitta
+            // ilova" deb so'raydi va ilova tanlash ro'yxatini
+            // ko'rsatadi. Pult uchun bitta ilovani uzatishning ma'nosi
+            // yo'q: kompyuterdan telefonni boshqarish uchun butun
+            // ekran kerak, aks holda bosh ekran ham, boshqa ilovalar
+            // ham ko'rinmaydi.
+            //
+            // createConfigForDefaultDisplay bilan so'ralganda tizim
+            // ortiqcha savolni umuman bermaydi.
+            intent = mpm.createScreenCaptureIntent(
+                    MediaProjectionConfig.createConfigForDefaultDisplay());
+        } else {
+            intent = mpm.createScreenCaptureIntent();
+        }
+        startActivityForResult(intent, REQ_PROJECTION);
     }
 
     /** Boshqarish xizmati yoqilmagan - sozlamalarga yo'naltiramiz. */
