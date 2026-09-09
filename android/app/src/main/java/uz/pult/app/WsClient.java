@@ -83,6 +83,12 @@ public class WsClient {
     // ------------------------------------------------------------ ulanish
 
     private void run() {
+        // Xabar berilganini kuzatamiz: readLoop odatiy tugaganda (server
+        // o'zi yopganda) istisno bo'lmaydi va ilgari hech kim
+        // xabardor qilinmasdi. Shunda ekran uzatish xizmati ishlab
+        // qolaverar va Android tepada qizil ko'rsatkichni ko'rsatib
+        // turaverardi.
+        boolean told = false;
         try {
             Uri u = Uri.parse(url);
             boolean secure = "wss".equalsIgnoreCase(u.getScheme())
@@ -106,6 +112,7 @@ public class WsClient {
         } catch (Exception e) {
             Log.w(TAG, "ulanish uzildi: " + e);
             running.set(false);
+            told = true;
             listener.onClosed(String.valueOf(e.getMessage()));
         } finally {
             running.set(false);
@@ -113,6 +120,7 @@ public class WsClient {
                 if (socket != null) socket.close();
             } catch (IOException ignored) {
             }
+            if (!told) listener.onClosed("ulanish yopildi");
         }
     }
 

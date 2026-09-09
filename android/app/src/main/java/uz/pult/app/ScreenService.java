@@ -160,8 +160,17 @@ public class ScreenService extends Service {
             @Override
             public void onClosed(String reason) {
                 Log.i(TAG, "ulanish yopildi: " + reason);
-                stopStream();
-                notice("Uzildi — " + reason);
+                // Ulanish o'z-o'zidan tiklanmaydi, shuning uchun
+                // ekranni ushlab turishning ma'nosi yo'q. Ilgari
+                // xizmat ishlab qolaverar va Android tepada "ekran
+                // uzatilmoqda" degan qizil ko'rsatkichni ko'rsatib
+                // turaverardi - hech narsa uzatilmayotgan bo'lsa ham.
+                if (!running) return;
+                main.post(() -> {
+                    if (!running) return;
+                    stopEverything();
+                    doneNotice("Aloqa uzildi — ekran uzatish to‘xtadi");
+                });
             }
         });
         ws.start();
@@ -504,6 +513,29 @@ public class ScreenService extends Service {
                 .addAction(new Notification.Action.Builder(
                         null, "To'xtatish", stopPi).build())
                 .build();
+    }
+
+    /**
+     * Uzatish tugaganini bildiradi.
+     *
+     * Alohida raqam bilan: stopForeground asosiy xabarnomani o'chirib
+     * yuboradi, shuning uchun uni o'sha raqamga yozib bo'lmaydi. Bu
+     * xabar o'tkinchi - bosilsa yo'qoladi.
+     */
+    private void doneNotice(String text) {
+        try {
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ? new Notification.Builder(this, CHANNEL)
+                    : new Notification.Builder(this);
+            nm.notify(NOTIF_ID + 1, b
+                    .setContentTitle("Pult")
+                    .setContentText(text)
+                    .setSmallIcon(android.R.drawable.ic_menu_view)
+                    .setAutoCancel(true)
+                    .build());
+        } catch (Exception ignored) {
+        }
     }
 
     private void notice(String text) {
