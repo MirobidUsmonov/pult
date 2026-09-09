@@ -53,11 +53,17 @@ public class HostsActivity extends Activity {
 
     private Hosts hosts;
     private LinearLayout list;
-    private Hosts.Host pendingShare;
+
+    // Bu uchtasi ataylab static: ruxsat so'rash uchun tizim
+    // sozlamalariga o'tilganda Android bu oynani butunlay yo'q qilib,
+    // qaytganda qaytadan yaratishi mumkin. Oddiy maydon bo'lsa
+    // to'xtagan joy yo'qolar va odam nima uchun hech narsa
+    // bo'lmayotganini tushunmay qolardi.
+    private static Hosts.Host pendingShare;
     /** Sozlamalarga ruxsat so'rab yuborilgan kompyuter. */
-    private Hosts.Host pendingAccess;
+    private static Hosts.Host pendingAccess;
     /** Batareya istisnosi so'rab yuborilgan kompyuter. */
-    private Hosts.Host pendingBattery;
+    private static Hosts.Host pendingBattery;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -65,13 +71,15 @@ public class HostsActivity extends Activity {
         hosts = new Hosts(this);
         buildUi();
 
-        boolean handled = handleIncomingLink(getIntent());
+        handleIncomingLink(getIntent());
 
-        // Bitta kompyuter bo'lsa darrov ochamiz - kundalik ishlatishda
-        // ortiqcha bosish kerak emas. Orqaga qaytilsa ro'yxat ko'rinadi.
-        if (!handled && saved == null && hosts.all().size() == 1) {
-            open(hosts.all().get(0));
-        }
+        // Ilgari bitta kompyuter bo'lsa u darrov ochilardi. Bu endi
+        // zarar keltiradi: ilovada ikkita yo'nalish bor va ruxsat
+        // so'rash uchun tizim sozlamalariga chiqib kelinganda Android
+        // oynani qaytadan yaratadi - o'shanda kompyuter ekrani
+        // o'z-o'zidan ochilib, odam ekranini uzatolmay qolardi.
+        // Ro'yxat ikkita ochiq tugmadan iborat, bitta bosish ortiqcha
+        // emas.
     }
 
     @Override
