@@ -251,6 +251,19 @@ without granting anything.
 Tap ⇧ on a computer's card in the app to start sharing; a notification stays up
 while it runs and stops it with one tap.
 
+**The red "screen is being shared" indicator cannot be removed.** While the
+phone is sharing, Android draws a privacy indicator in the status bar. That is
+not something Pult puts there and not something Pult can take away: it is a
+compatibility requirement tied to `MediaProjection`, with no opt-out at any API
+level for an ordinary app. The one way to *avoid* it is to not use
+`MediaProjection` at all and capture the screen as the `shell` user instead —
+which is exactly why scrcpy shows no indicator. Doing that without root means
+routing through Shizuku, which needs a one-time setup on the phone (wireless
+debugging on, Shizuku started). That was considered and deliberately not done
+for now; the indicator stays. What Pult *does* guarantee is that the indicator
+never lingers falsely — sharing stops, and the indicator with it, as soon as the
+connection to the computer drops.
+
 To watch the phone on the computer's own monitor, use the tray menu — **Telefon
 ekranini ko'rish**. It opens the same web UI with `#view=phone`, which selects
 the connected phone as soon as one appears and keeps waiting if none has. On a
