@@ -101,6 +101,27 @@ class HubSettings:
 
 
 @dataclass
+class RemoteSettings:
+    """Tashqi kirish - bitta Wi-Fi chegarasidan chiqish uchun.
+
+    Uy routerida port ochish ko'pchilikda ishlamaydi: operatorlar oq IP
+    bermaydi (CGNAT). Shuning uchun kompyuterning o'zi tashqariga
+    chiqib tunnel ochadi - bu har qanday tarmoqda ishlaydi.
+
+    "off"        - faqat mahalliy tarmoq.
+    "cloudflare" - cloudflared tezkor tunneli. Hisob ham, domen ham
+                   kerak emas, sertifikat haqiqiy (brauzer
+                   ogohlantirmaydi). Kamchiligi: manzil har safar
+                   yangi bo'ladi, shuning uchun u Telegram orqali
+                   yuboriladi.
+    """
+    mode: str = "off"
+    # cloudflared fayli. Bo'sh bo'lsa dastur uni tizimdan qidiradi,
+    # topmasa o'zi yuklab oladi.
+    binary: str = ""
+
+
+@dataclass
 class TelegramSettings:
     enabled: bool = False
     bot_token: str = ""
@@ -133,6 +154,7 @@ class Config:
     public_url: str = ""
     ffmpeg_path: str | None = None
     stream: StreamSettings = field(default_factory=StreamSettings)
+    remote: RemoteSettings = field(default_factory=RemoteSettings)
     hub: HubSettings = field(default_factory=HubSettings)
     telegram: TelegramSettings = field(default_factory=TelegramSettings)
     security: SecuritySettings = field(default_factory=SecuritySettings)

@@ -99,6 +99,11 @@ class HostServer:
         if not _authorized(request, self.cfg.token):
             return web.Response(text="kalit kerak", status=401)
         urls = local_addresses(self.cfg.port, self.scheme)
+        # Tunnel ochiq bo'lsa QR kodga o'sha manzil tushadi: bir marta
+        # skanerlangan telefon keyin istalgan tarmoqdan ulanaveradi.
+        # Mahalliy manzillar ro'yxatda qoladi - ular tezroq ishlaydi.
+        if self.cfg.public_url:
+            urls = [self.cfg.public_url.rstrip("/")] + urls
         target = f"{urls[0]}/#k={self.cfg.token}"
         html = render_pair_page(target, urls, self.cfg, tls.fingerprint(config_dir()))
         return web.Response(text=html, content_type="text/html")

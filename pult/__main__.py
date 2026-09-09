@@ -38,20 +38,20 @@ async def run_headless(cfg: cfgmod.Config, verbose: bool) -> int:
         except (ValueError, AttributeError):
             pass
 
+    def ready() -> None:
+        if verbose:
+            print("\n".join(appmod.connection_info(cfg)))
+        else:
+            logging.info("ishga tushdi: %s", appmod.phone_url(cfg))
+
+    # serve() ishlatiladi, chunki tunnel va xabarnoma o'sha yerda
+    # ulangan. Bu yerda alohida yozilsa ikkita rejim asta-sekin
+    # bir-biridan farq qilib ketardi.
     try:
-        server = appmod.build_server(cfg)
+        await appmod.serve(cfg, stop, on_ready=ready)
     except appmod.FfmpegMissing as exc:
         logging.error("%s", exc)
         return 2
-
-    await server.start()
-    text = "\n".join(appmod.connection_info(cfg))
-    print(text) if verbose else logging.info("ishga tushdi: %s", appmod.phone_url(cfg))
-
-    try:
-        await stop.wait()
-    finally:
-        await server.stop()
     return 0
 
 
@@ -67,6 +67,8 @@ def main() -> int:
                         help="HTTPS o'rniga oddiy HTTP (faqat tunnel orqasida)")
     parser.add_argument("--show", action="store_true",
                         help="ulanish manzilini ko'rsatib chiqish")
+    parser.add_argument("--remote", choices=["off", "cloudflare"],
+                        help="tashqi kirish: bitta Wi-Fi chegarasidan chiqish")
     parser.add_argument("--telegram", metavar="TOKEN",
                         help="Telegram xabarnomasini sozlash (@BotFather bergan token)")
     parser.add_argument("--test-notify", action="store_true",
@@ -75,6 +77,24 @@ def main() -> int:
 
     appmod.setup_logging(console=args.console or args.show or bool(args.telegram))
     cfg = _apply_args(cfgmod.load(), args)
+
+    if args.remote:
+        # Faylga yozamiz, shuning uchun buyruq qatoridagi boshqa
+        # vaqtinchalik o'zgarishlar (--port va h.k.) tushib qolmasin
+        fresh = cfgmod.load()
+        fresh.remote.mode = args.remote
+        cfgmod.save(fresh)
+        if args.remote == "off":
+            print("Tashqi kirish o'chirildi - faqat mahalliy tarmoq.")
+        else:
+            print("Tashqi kirish yoqildi: cloudflare.")
+            print()
+            print("  Pult qayta ishga tushganda cloudflared yuklab olinadi")
+            print("  (bir marta, ~35 MB) va tashqi manzil ochiladi.")
+            print("  Manzil har safar yangi bo'ladi va Telegram xabari")
+            print("  bilan keladi - shuning uchun xabarnoma sozlangani")
+            print("  ma'qul:  python -m pult --telegram <TOKEN>")
+        return 0
 
     if args.telegram:
         from . import notify

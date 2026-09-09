@@ -110,15 +110,23 @@ class TrayApp:
     async def _serve(self) -> None:
         server = appmod.build_server(self.cfg)
         await server.start()
+        # Ikonka server ko'tarilishi bilan chiqadi: tunnel ochilishini
+        # kutish bir necha soniya olishi mumkin va bu vaqtda dastur
+        # ishga tushmagandek ko'rinardi.
         self.ready.set()
-        notifier = appmod.start_notifier(self.cfg)
+        tun = await appmod.start_remote(self.cfg)
+        tracker = asyncio.create_task(appmod.track_public_url(self.cfg, tun)) if tun else None
+        notifier = appmod.start_notifier(self.cfg, tun)
         log.info("Pult treyda ishlayapti - %s", appmod.phone_url(self.cfg))
         try:
             assert self.stop_event
             await self.stop_event.wait()
         finally:
-            if notifier:
-                notifier.cancel()
+            for task in (notifier, tracker):
+                if task:
+                    task.cancel()
+            if tun:
+                await tun.stop()
             await server.stop()
 
     # -- menyu -------------------------------------------------------------
@@ -152,7 +160,15 @@ class TrayApp:
     def copy_link(self) -> None:
         url = appmod.phone_url(self.cfg)
         _copy(url)
-        self.notify("Havola nusxalandi", url)
+        # Qaysi havola nusxalanganini aytish muhim: mahalliy havola
+        # boshqa tarmoqdan ochilmaydi va buni oldindan bilgan yaxshi.
+        if self.cfg.public_url:
+            self.notify("Tashqi havola nusxalandi", url)
+        elif self.cfg.remote.mode != "off":
+            self.notify("Mahalliy havola nusxalandi",
+                        f"Tashqi manzil hali tayyor emas. {url}")
+        else:
+            self.notify("Havola nusxalandi (faqat shu Wi-Fi)", url)
 
     def notify(self, title: str, message: str = "") -> None:
         try:

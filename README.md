@@ -251,6 +251,46 @@ without granting anything.
 Tap ⇧ on a computer's card in the app to start sharing; a notification stays up
 while it runs and stops it with one tap.
 
+To watch the phone on the computer's own monitor, use the tray menu — **Telefon
+ekranini ko'rish**. It opens the same web UI with `#view=phone`, which selects
+the connected phone as soon as one appears and keeps waiting if none has. On a
+mouse-and-keyboard screen the page drops its touch controls: clicks map
+straight to taps at that point, the wheel scrolls, and the physical keyboard is
+forwarded, so you type into the phone with your real keyboard.
+
+### Reaching the computer from outside the Wi-Fi
+
+By default the agent is only reachable on the local network. Opening a router
+port is not a real option for most people — carriers hand out addresses behind
+CGNAT, so there is nothing to forward to. The way out is for the computer to
+dial *outward* and hold a tunnel open:
+
+```bash
+python -m pult --remote cloudflare
+```
+
+On the next start the agent fetches `cloudflared` once (~52 MB, into the config
+directory) and opens a quick tunnel. That needs no Cloudflare account and no
+domain. Three things come with it:
+
+- the address works from any network, mobile data included;
+- the certificate is real, so the browser stops warning and WebCodecs is happy
+  without installing anything on the phone;
+- nothing is exposed on your router.
+
+The catch is that a quick tunnel's address is new on every start. That is why
+it is delivered by the Telegram message the agent already sends when the
+computer comes online — set that up (`--telegram <TOKEN>`) and the fresh link
+arrives on your phone by itself. The tray's *Havolani nusxalash* and the QR
+page also switch to the public address once the tunnel is up.
+
+If the tunnel drops, it is rebuilt with a backoff, and the stored address is
+cleared while it is down rather than left looking valid. The download resumes
+from where it stopped if it is interrupted — on a slow link the file takes a
+while and starting over each time would be painful.
+
+Turn it back off with `python -m pult --remote off`.
+
 ### Getting the built APK to your phone
 
 ```bash

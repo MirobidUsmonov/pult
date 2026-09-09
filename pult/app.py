@@ -99,9 +99,17 @@ def connection_info(cfg: cfgmod.Config) -> list[str]:
         "",
         "  Telefondan shu manzilga kiring:",
     ]
+    if cfg.public_url:
+        lines.append(f"    {cfg.public_url.rstrip('/')}/#k={cfg.token}   <- har joydan")
     for url in cfgmod.local_addresses(cfg.port, scheme):
         lines.append(f"    {url}/#k={cfg.token}")
     lines += ["", f"  Yoki QR kod:  {pair_url(cfg)}"]
+    if not cfg.public_url and cfg.remote.mode == "off":
+        lines += [
+            "",
+            "  Bu manzillar faqat shu Wi-Fi ichida ishlaydi. Har joydan",
+            "  ulanish uchun:  python -m pult --remote cloudflare",
+        ]
     if scheme == "https":
         lines += [
             "",
@@ -115,7 +123,38 @@ def connection_info(cfg: cfgmod.Config) -> list[str]:
     return lines
 
 
-def start_notifier(cfg: cfgmod.Config) -> asyncio.Task | None:
+async def start_remote(cfg: cfgmod.Config):
+    """Tashqi kirish tunnelini ochadi (sozlamada yoqilgan bo'lsa).
+
+    Xato bo'lsa dastur ishlashda davom etadi: mahalliy tarmoqdan
+    ulanish baribir mumkin va uni yo'qotish tunneldan ko'ra yomonroq.
+    """
+    from . import tunnel
+
+    try:
+        return await tunnel.create(cfg, cfgmod.config_dir())
+    except Exception:
+        log.warning("tashqi kirish ochilmadi", exc_info=True)
+        return None
+
+
+async def track_public_url(cfg: cfgmod.Config, tun) -> None:
+    """Tunnel manzilini sozlamaga ko'chirib turadi.
+
+    Bu bir martalik ish emas: tunnel uzilib qayta ulansa manzil yangi
+    bo'ladi. Eski manzilni saqlab qolish zararli - u ishlamaydi,
+    lekin ishlaydigandek ko'rinadi.
+    """
+    while True:
+        await tun.ready.wait()
+        if tun.url:
+            cfg.public_url = tun.url
+        while tun.ready.is_set():
+            await asyncio.sleep(1)
+        cfg.public_url = ""
+
+
+def start_notifier(cfg: cfgmod.Config, tun=None) -> asyncio.Task | None:
     """Kompyuter onlayn bo'lganini xabar qilishni fon vazifasi sifatida
     boshlaydi.
 
@@ -127,19 +166,38 @@ def start_notifier(cfg: cfgmod.Config) -> asyncio.Task | None:
 
     if not (cfg.telegram.enabled and cfg.telegram.on_start):
         return None
-    return asyncio.create_task(
-        notify.announce_online(cfg, phone_url(cfg)), name="pult-notify"
-    )
+
+    async def run() -> None:
+        # Tunnel manzilini kutamiz: xabarda mahalliy IP emas, har
+        # joydan ochiladigan manzil bo'lishi kerak. Manzil har safar
+        # yangi bo'lgani uchun xabarning asosiy foydasi ham shu.
+        if tun is not None:
+            await tun.wait_url(timeout=90)
+        await notify.announce_online(cfg, phone_url(cfg))
+
+    return asyncio.create_task(run(), name="pult-notify")
 
 
-async def serve(cfg: cfgmod.Config, stop: asyncio.Event) -> None:
-    """Serverni ishga tushirib, to'xtatish signaligacha kutadi."""
+async def serve(cfg: cfgmod.Config, stop: asyncio.Event, on_ready=None) -> None:
+    """Serverni ishga tushirib, to'xtatish signaligacha kutadi.
+
+    on_ready server tinglay boshlagach chaqiriladi - tunnel ochilishini
+    kutmasdan. Tunnel bir necha soniya olishi mumkin, mahalliy
+    tarmoqdan ulanish esa allaqachon tayyor.
+    """
     server = build_server(cfg)
     await server.start()
-    notifier = start_notifier(cfg)
+    if on_ready:
+        on_ready()
+    tun = await start_remote(cfg)
+    tracker = asyncio.create_task(track_public_url(cfg, tun)) if tun else None
+    notifier = start_notifier(cfg, tun)
     try:
         await stop.wait()
     finally:
-        if notifier:
-            notifier.cancel()
+        for task in (notifier, tracker):
+            if task:
+                task.cancel()
+        if tun:
+            await tun.stop()
         await server.stop()

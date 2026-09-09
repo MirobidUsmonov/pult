@@ -136,6 +136,12 @@ def online_message(cfg: cfgmod.Config, url: str) -> str:
         "",
         f"<code>{url}</code>",
     ]
+    # Tunnel manzili har safar yangi bo'ladi - buni aytmasak,
+    # foydalanuvchi eski havolani saqlab qo'yib, keyin nega
+    # ishlamayotganini tushunmay qoladi.
+    if _is_public(url):
+        lines += ["", "🌍 Har qanday tarmoqdan ochiladi. Kompyuter "
+                      "qayta yonganda havola yangilanadi."]
     return "\n".join(lines)
 
 
