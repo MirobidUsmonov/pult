@@ -188,6 +188,75 @@ def remove_task() -> None:
 
 # ------------------------------------------------------------ o'rnatish
 
+def existing_config() -> Path | None:
+    """Shu kompyuterda ilgari sozlangan Pult'ni topadi.
+
+    Bu muhim: kalit va sertifikat kompyuterning "shaxsi" hisoblanadi va
+    telefonda saqlangan. Agar o'rnatgich yangisini yaratsa, telefon
+    o'sha kompyuterni tanimay qoladi - ulanish 401 beradi, sertifikat
+    esa "o'zgargan" deb ko'rinadi. Buni foydalanuvchi tushunolmaydi:
+    tashqaridan hech narsa o'zgarmagan, lekin ishlamay qolgan.
+    """
+    candidates: list[Path] = []
+
+    # Avvalgi avtomatik ishga tushirish qayerni ko'rsatayotganini so'raymiz
+    if sys.platform == "win32":
+        r = _powershell(
+            f"(Get-ScheduledTask -TaskName {_ps_quote(TASK_NAME)} "
+            "-ErrorAction SilentlyContinue).Actions.Execute"
+        )
+        for line in (r.stdout or "").splitlines():
+            line = line.strip().strip('"')
+            if not line:
+                continue
+            exe = Path(line)
+            # pythonw.exe bo'lsa yonida sozlama yo'q - argumentdagi
+            # loyiha papkasini bilmaymiz, shuning uchun o'tkazamiz
+            if exe.name.lower().startswith("python"):
+                continue
+            candidates.append(exe.parent / "data")
+
+    base = os.environ.get("APPDATA")
+    if base:
+        candidates.append(Path(base) / "Pult")
+
+    for d in candidates:
+        if (d / "config.json").is_file():
+            return d
+    return None
+
+
+def adopt(source: Path, data: Path) -> bool:
+    """Eski sozlamadan kompyuterning "shaxsini" ko'chiradi.
+
+    Faqat kalit, raqam, nom va sertifikat ko'chiriladi - qolgan
+    sozlamalar yangisiniki bo'lib qolaveradi.
+    """
+    try:
+        old = json.loads((source / "config.json").read_text(encoding="utf-8"))
+    except Exception:
+        log.warning("eski sozlama o'qilmadi: %s", source, exc_info=True)
+        return False
+
+    target = data / "config.json"
+    try:
+        new = json.loads(target.read_text(encoding="utf-8")) if target.is_file() else {}
+    except Exception:
+        new = {}
+
+    for field in ("token", "host_id", "host_name", "port", "local_port"):
+        if old.get(field):
+            new[field] = old[field]
+    target.write_text(json.dumps(new, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Sertifikat ham o'sha bo'lishi kerak: telefon uning izini saqlagan
+    for name in ("cert.pem", "key.pem"):
+        src = source / name
+        if src.is_file():
+            shutil.copy2(src, data / name)
+    return True
+
+
 def install(quiet: bool = False) -> tuple[bool, str]:
     """Dasturni doimiy joyga o'rnatadi. (muvaffaqiyat, xabar)"""
     exe = frozen_exe()
@@ -225,6 +294,16 @@ def install(quiet: bool = False) -> tuple[bool, str]:
     os.environ["PULT_CONFIG_DIR"] = str(data)
     from . import config as cfgmod
 
+    # Shu kompyuterda Pult ilgari sozlangan bo'lsa - kalitini va
+    # sertifikatini olamiz, aks holda telefon uni tanimay qoladi
+    adopted = ""
+    if not (data / "config.json").is_file():
+        source = existing_config()
+        if source and source.resolve() != data.resolve():
+            if adopt(source, data):
+                adopted = str(source)
+                log.info("eski sozlama olindi: %s", source)
+
     cfg = cfgmod.load(data / "config.json")
     p = preset()
     cfg.remote.mode = p.get("remote_mode", "cloudflare")
@@ -245,6 +324,9 @@ def install(quiet: bool = False) -> tuple[bool, str]:
     ok_task = register_task(target)
 
     lines = [f"Pult o'rnatildi: {target_dir}"]
+    if adopted:
+        lines.append("Avvalgi sozlama olindi - telefonni qayta ulash "
+                     "kerak emas.")
     lines.append("Kirganda avtomatik ishga tushadi."
                  if ok_task else
                  "Avtomatik ishga tushirishni qo'shib bo'lmadi - "
@@ -286,20 +368,20 @@ def open_pairing(data: Path) -> None:
     bilmay qoladi.
     """
     import time
-    import webbrowser
 
     from . import config as cfgmod
+    from . import window
 
     try:
         cfg = cfgmod.load(data / "config.json")
-        scheme = "http" if cfg.tls == "off" else "https"
-        url = f"{scheme}://127.0.0.1:{cfg.port}/pair?k={cfg.token}"
+        port = cfg.port if cfg.tls == "off" else (cfg.local_port or cfg.port + 1)
+        url = f"http://127.0.0.1:{port}/pair?k={cfg.token}"
         # Server ko'tarilishini kutamiz. Sertifikat birinchi marta
         # yasalgani uchun bu bir necha soniya olishi mumkin.
         deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
-            if _port_open(cfg.port):
-                webbrowser.open(url)
+            if _port_open(port):
+                window.open_url(url, size=(560, 780))
                 return
             time.sleep(0.5)
         log.warning("server ko'tarilmadi, ulash sahifasi ochilmadi")

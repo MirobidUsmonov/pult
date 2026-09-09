@@ -197,6 +197,30 @@ class HostServer:
         await site.start()
         log.info("server tinglayapti: %s://%s:%s", self.scheme, self.cfg.bind, self.cfg.port)
 
+        # Kompyuterning o'zi uchun alohida, oddiy HTTP eshigi.
+        #
+        # Sababi sertifikat: mahalliy tarmoq uchun u o'z-o'zini
+        # imzolagan bo'lgani uchun brauzer har safar ogohlantiradi va
+        # dastur "shubhali sayt" bo'lib ko'rinadi. 127.0.0.1 esa
+        # brauzer uchun baribir xavfsiz manzil hisoblanadi - video
+        # dekodlash (WebCodecs) u yerda HTTPS'siz ham ishlaydi.
+        #
+        # Faqat 127.0.0.1 ga bog'lanadi, tarmoqqa chiqmaydi. Kalit esa
+        # baribir tekshiriladi.
+        if ssl_ctx is not None:
+            try:
+                local = web.TCPSite(self._runner, "127.0.0.1", self.local_port)
+                await local.start()
+                log.info("mahalliy eshik: http://127.0.0.1:%s", self.local_port)
+            except OSError as exc:
+                # Bu qo'shimcha qulaylik - band bo'lsa dastur ishlayveradi
+                log.warning("mahalliy eshik ochilmadi (%s): %s", self.local_port, exc)
+
+    @property
+    def local_port(self) -> int:
+        """Kompyuterning o'zi uchun HTTP porti."""
+        return self.cfg.local_port or self.cfg.port + 1
+
     async def stop(self) -> None:
         await self.ctx.shutdown()
         if self._runner:

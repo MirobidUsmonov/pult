@@ -61,10 +61,22 @@ def build_server(cfg: cfgmod.Config) -> HostServer:
     return HostServer(cfg, caps)
 
 
+def local_base(cfg: cfgmod.Config) -> str:
+    """Kompyuterning o'zida ochiladigan manzil.
+
+    Alohida HTTP eshigi ishlatiladi: o'z-o'zini imzolagan sertifikat
+    bilan brauzer har safar ogohlantirar va dastur "shubhali sayt"
+    bo'lib ko'rinardi. 127.0.0.1 brauzer uchun baribir xavfsiz manzil,
+    shuning uchun video ham HTTPS'siz ishlaydi.
+    """
+    if cfg.tls == "off":
+        return f"http://127.0.0.1:{cfg.port}"
+    return f"http://127.0.0.1:{cfg.local_port or cfg.port + 1}"
+
+
 def pair_url(cfg: cfgmod.Config) -> str:
-    """Kompyuterning o'z brauzerida ochiladigan ulash sahifasi."""
-    scheme = "http" if cfg.tls == "off" else "https"
-    return f"{scheme}://127.0.0.1:{cfg.port}/pair?k={cfg.token}"
+    """Kompyuterda ochiladigan ulash sahifasi (QR kod)."""
+    return f"{local_base(cfg)}/pair?k={cfg.token}"
 
 
 def viewer_url(cfg: cfgmod.Config) -> str:
@@ -75,8 +87,7 @@ def viewer_url(cfg: cfgmod.Config) -> str:
     Telefon hali ulanmagan bo'lsa sahifa nima qilish kerakligini
     yozib kutib turadi.
     """
-    scheme = "http" if cfg.tls == "off" else "https"
-    return f"{scheme}://127.0.0.1:{cfg.port}/#k={cfg.token}&view=phone"
+    return f"{local_base(cfg)}/#k={cfg.token}&view=phone"
 
 
 def phone_url(cfg: cfgmod.Config) -> str:

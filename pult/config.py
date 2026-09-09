@@ -144,6 +144,10 @@ class Config:
     token: str = ""
     bind: str = "0.0.0.0"
     port: int = 8787
+    # Kompyuterning o'zi uchun HTTP porti (faqat 127.0.0.1). 0 bo'lsa
+    # port + 1 ishlatiladi. Bu yerda sertifikat kerak emas, shuning
+    # uchun kompyuterda oyna ogohlantirishsiz ochiladi.
+    local_port: int = 0
     # "auto" - o'z-o'zini imzolagan sertifikat bilan HTTPS (telefon uchun shart:
     # brauzer video dekodlashni faqat xavfsiz kontekstda beradi).
     # "off"  - oddiy HTTP. Faqat oldida HTTPS beruvchi tunnel yoki proksi

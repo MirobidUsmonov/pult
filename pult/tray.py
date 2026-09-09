@@ -14,11 +14,11 @@ import os
 import subprocess
 import sys
 import threading
-import webbrowser
 from pathlib import Path
 
 from . import app as appmod
 from . import config as cfgmod
+from . import window
 
 log = logging.getLogger("pult.tray")
 
@@ -151,11 +151,11 @@ class TrayApp:
         )
 
     def open_pair(self) -> None:
-        webbrowser.open(appmod.pair_url(self.cfg))
+        window.open_url(appmod.pair_url(self.cfg), size=(560, 780))
 
     def open_viewer(self) -> None:
-        """Telefon ekranini kompyuter brauzerida ochadi."""
-        webbrowser.open(appmod.viewer_url(self.cfg))
+        """Telefon ekranini kompyuterda alohida oynada ochadi."""
+        window.open_url(appmod.viewer_url(self.cfg), size=(980, 720))
 
     def copy_link(self) -> None:
         url = appmod.phone_url(self.cfg)
