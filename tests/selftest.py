@@ -445,6 +445,9 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                 check("tomoshabin ketgach oqim to'xtadi", not server.ctx.capture.running,
                       "bo'sh turganda resurs sarflanmaydi")
 
+            # -- telefonni manba sifatida ulash (teskari boshqaruv)
+            await test_phone_source(sess, base, sslctx, cfg)
+
             # -- ochiq ma'lumot
             async with sess.get(f"{base}/api/info", ssl=sslctx) as r:
                 info = await r.json()
@@ -452,6 +455,112 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                       "monitors" not in info and "name" in info, str(info)[:70])
     finally:
         await server.stop()
+
+
+# ------------------------------------------------- 5. teskari boshqaruv
+
+
+async def test_phone_source(sess, base, sslctx, cfg) -> None:
+    """Telefon "manba" bo'lib ulanadi, brauzer uni ko'radi va boshqaradi.
+
+    Haqiqiy telefonsiz tekshiriladi: soxta mijoz telefonning o'rnini
+    bosadi. Bu marshrutlashning butun yo'lini qamrab oladi - manba
+    ro'yxatga tushishi, kadrlarning to'g'ri tomoshabinga borishi va
+    kiritishning kompyuterga emas, telefonga ketishi.
+    """
+    section("5. Teskari boshqaruv (telefon manba sifatida)")
+
+    url = f"{base}/ws?k={cfg.token}"
+    async with sess.ws_connect(url, ssl=sslctx) as phone:
+        await phone.receive()      # hello
+        await phone.send_json({
+            "t": "hello", "role": "source", "name": "Sinov telefoni",
+            "info": {"kind": "phone", "w": 1080, "h": 2400, "input": True},
+        })
+        await asyncio.sleep(0.3)
+
+        async with sess.ws_connect(url, ssl=sslctx) as viewer:
+            hello = json.loads((await viewer.receive()).data)
+            names = [x["name"] for x in hello.get("sources", [])]
+            check("manba ro'yxatga tushdi", "Sinov telefoni" in names, ", ".join(names))
+
+            await viewer.send_json({"t": "hello", "role": "controller", "name": "sinov"})
+            src_id = next(x["id"] for x in hello["sources"] if x["kind"] == "phone")
+
+            # Tomoshabin telefonni tanlaydi -> telefonga "oqimni boshla" kelishi kerak
+            await viewer.send_json({"t": "view", "on": True, "source": src_id})
+            start = None
+            end = time.monotonic() + 4
+            while time.monotonic() < end:
+                m = await asyncio.wait_for(phone.receive(), timeout=4)
+                if m.type == aiohttp.WSMsgType.TEXT:
+                    d = json.loads(m.data)
+                    if d.get("t") == "stream_start":
+                        start = d
+                        break
+            check("telefonga oqim so'rovi keldi", start is not None,
+                  f"{start.get('width')}px {start.get('fps')} k/s" if start else "kelmadi")
+
+            # Telefon oqim haqida xabar berib, kadr yuboradi
+            await phone.send_json({"t": "stream", "codec": "avc1.42E01E",
+                                   "w": 1080, "h": 2400, "fps": 30})
+            for i in range(5):
+                head = HDR.pack(1, 1 if i == 0 else 0, 0, i * 33)
+                await phone.send_bytes(head + bytes([i]) * 400)
+                await asyncio.sleep(0.05)
+
+            got_stream, frames = None, 0
+            end = time.monotonic() + 4
+            while time.monotonic() < end and frames < 5:
+                try:
+                    m = await asyncio.wait_for(viewer.receive(), timeout=2)
+                except asyncio.TimeoutError:
+                    break
+                if m.type == aiohttp.WSMsgType.TEXT:
+                    d = json.loads(m.data)
+                    if d.get("t") == "stream":
+                        got_stream = d
+                elif m.type == aiohttp.WSMsgType.BINARY:
+                    frames += 1
+            check("telefon oqimi tomoshabinga yetdi", got_stream is not None,
+                  got_stream.get("codec") if got_stream else "yetmadi")
+            check("telefon kadrlari uzatildi", frames >= 4, f"{frames} kadr")
+
+            # Kiritish kompyuterga emas, telefonga borishi kerak
+            saved = None
+            try:
+                from pult.platform import input_backend
+                saved = input_backend().cursor_pos()
+            except Exception:
+                pass
+            await viewer.send_json({"t": "mouse", "a": "click", "b": "left",
+                                    "x": 0.5, "y": 0.5})
+            forwarded = None
+            end = time.monotonic() + 3
+            while time.monotonic() < end:
+                m = await asyncio.wait_for(phone.receive(), timeout=3)
+                if m.type == aiohttp.WSMsgType.TEXT:
+                    d = json.loads(m.data)
+                    if d.get("t") == "mouse":
+                        forwarded = d
+                        break
+            check("kiritish telefonga yo'naltirildi", forwarded is not None,
+                  f"{forwarded.get('a')} ({forwarded.get('x')},{forwarded.get('y')})"
+                  if forwarded else "yetmadi")
+            if saved:
+                now = input_backend().cursor_pos()
+                check("kompyuter kursoriga tegilmadi", now == saved, str(now))
+
+            await viewer.send_json({"t": "view", "on": False})
+            await asyncio.sleep(0.3)
+
+    # Telefon uzildi - tomoshabin xabardor bo'lishi kerak
+    await asyncio.sleep(0.4)
+    async with sess.ws_connect(url, ssl=sslctx) as v2:
+        hello = json.loads((await v2.receive()).data)
+        kinds = [x["kind"] for x in hello.get("sources", [])]
+        check("uzilgan manba ro'yxatdan chiqdi", "phone" not in kinds,
+              ", ".join(kinds))
 
 
 # ----------------------------------------------------------------- main

@@ -32,6 +32,10 @@ BIN_VIDEO = 1
 # rasm bir lahza qotadi, lekin kechikish to'planib ketmaydi.
 MAX_QUEUED_FRAMES = 60
 
+# Boshqa manbani ko'rayotgan boshqaruvchidan kelganda o'sha manbaga
+# o'zgartirilmasdan uzatiladigan xabarlar.
+FORWARDED = {"mouse", "scroll", "key", "combo", "text", "release_keys", "cmd"}
+
 
 def pack_video(au: bytes, key: bool, ts_ms: int) -> bytes:
     return _BIN_HEADER.pack(BIN_VIDEO, 1 if key else 0, 0, ts_ms & 0xFFFFFFFF) + au
@@ -75,6 +79,18 @@ class ControllerSession:
         # Nisbiy harakatning yaxlitlanmagan qoldig'i
         self._frac_x = 0.0
         self._frac_y = 0.0
+
+        # Sessiya ikki xil bo'lishi mumkin. "Boshqaruvchi" - ekranni
+        # ko'radi va buyruq yuboradi (telefon, brauzer, AI). "Manba" -
+        # o'z ekranini beradi va buyruqlarni bajaradi (telefon ilovasi).
+        # Bitta sinf ikkalasiga ham yetadi, chunki protokol bir xil.
+        self.is_source = False
+        self.source_key = ""          # manba bo'lsa - o'z raqami
+        self.source_info: dict = {}
+        self.source_stream: dict | None = None
+        self.source_gop: list[bytes] = []
+        # Boshqaruvchi bo'lsa - hozir qaysi manbani ko'ryapti
+        self.source_id = "local"
 
     # -- hayot sikli -------------------------------------------------------
 
@@ -136,6 +152,22 @@ class ControllerSession:
             self._need_key = True
             log.debug("sessiya %s: navbat to'ldi, kalit kadr kutilmoqda", self.id)
 
+    async def on_binary(self, data: bytes) -> None:
+        """Manbadan kelgan kadr - uni ko'rayotganlarga tarqatamiz."""
+        if not self.is_source or len(data) < _BIN_HEADER.size:
+            return
+        kind, flags, _r, _ts = _BIN_HEADER.unpack_from(data, 0)
+        if kind != BIN_VIDEO:
+            return
+        key = bool(flags & 1)
+        # Kalit kadrdan beri kelganlarni saqlaymiz: yangi tomoshabin
+        # keyingi kalit kadrni kutmasdan rasm ko'radi.
+        if key:
+            self.source_gop = [data]
+        elif len(self.source_gop) < 240:
+            self.source_gop.append(data)
+        await self.ctx.route_source_frame(self, data)
+
     async def send_catch_up(self) -> None:
         """Ulangan zahoti oxirgi kalit kadrdan boshlab yuboradi."""
         units = self.ctx.capture.catch_up()
@@ -153,6 +185,21 @@ class ControllerSession:
 
     async def handle(self, msg: dict) -> None:
         kind = msg.get("t")
+
+        # Boshqaruvchi telefon ekranini ko'rayotgan bo'lsa, kiritish
+        # kompyuterga emas, o'sha telefonga ketishi kerak. Xabar
+        # shakli bir xil bo'lgani uchun uni o'zgartirmasdan uzatamiz.
+        if kind in FORWARDED and not self.is_source and self.source_id != "local":
+            target = self.ctx.remote_sources.get(self.source_id)
+            if target is None:
+                await self.send_json({"t": "error", "msg": "manba ulanmagan"})
+                return
+            try:
+                await target.send_json(msg)
+            except Exception as exc:
+                log.info("manbaga uzatilmadi: %s", exc)
+            return
+
         handler = getattr(self, f"_on_{kind}", None)
         if handler is None:
             await self.send_json({"t": "error", "msg": f"noma'lum xabar: {kind}"})
@@ -173,12 +220,66 @@ class ControllerSession:
         self.role = str(msg.get("role") or "controller")[:32]
         log.info("ulandi: %s (%s) %s", self.name, self.role, self.peer)
 
+        if self.role == "source":
+            self.is_source = True
+            self.source_key = f"s{self.id}"
+            info = msg.get("info")
+            self.source_info = dict(info) if isinstance(info, dict) else {}
+            await self.ctx.add_source(self)
+
     async def _on_ping(self, msg: dict) -> None:
         await self.send_json({"t": "pong", "id": msg.get("id"), "ts": msg.get("ts")})
+
+    async def _on_stream(self, msg: dict) -> None:
+        """Manba o'z oqimi haqida xabar berdi - uni ko'rayotganlarga uzatamiz."""
+        if not self.is_source:
+            raise ValueError("bu xabarni faqat manba yuboradi")
+        self.source_stream = {
+            "t": "stream",
+            "codec": msg.get("codec"),
+            "w": msg.get("w"),
+            "h": msg.get("h"),
+            "fps": msg.get("fps"),
+            "encoder": msg.get("encoder", "telefon"),
+            "source": self.source_key,
+        }
+        self.source_gop = []
+        for v in self.ctx.viewers_of(self.source_key):
+            try:
+                await v.send_json(self.source_stream)
+            except Exception:
+                pass
 
     async def _on_view(self, msg: dict) -> None:
         """Oqimni yoqish/o'chirish va sozlamalarini o'zgartirish."""
         want = bool(msg.get("on", True))
+
+        # Boshqa manbaga (telefonga) o'tish
+        if "source" in msg:
+            new_id = str(msg["source"])
+            if new_id != self.source_id:
+                if new_id != "local" and new_id not in self.ctx.remote_sources:
+                    raise ValueError(f"bunday manba yo'q: {new_id}")
+                self.source_id = new_id
+                self._need_key = True
+
+        if self.source_id != "local":
+            self.viewing = want
+            await self.ctx.sync_capture()      # kompyuter oqimi kerak emas
+            await self.ctx.sync_sources()
+            src = self.ctx.remote_sources.get(self.source_id)
+            if want and src is not None:
+                if src.source_stream:
+                    await self.send_json(src.source_stream)
+                # Kalit kadrdan beri kelganlarni yuboramiz - rasm darrov chiqadi
+                for frame in list(src.source_gop):
+                    try:
+                        self._queue.put_nowait(frame)
+                        self._need_key = False
+                    except asyncio.QueueFull:
+                        break
+            return
+
         s = self.ctx.cfg.stream
         monitor_changed = False
         if "monitor" in msg and int(msg["monitor"]) != s.monitor:
@@ -201,6 +302,7 @@ class ControllerSession:
             self._frac_x = self._frac_y = 0.0
             self.ctx.ensure_cursor_on_monitor()
         await self.ctx.sync_capture(changed=(want and was))
+        await self.ctx.sync_sources()
         if want:
             # Kodek satri aniqlanmaguncha kutamiz: brauzer dekoderni
             # aynan shu satr bilan sozlaydi, undan oldin yuborilgan
@@ -336,6 +438,8 @@ class HostContext:
         self.input = input_backend()
         self.monitors = self.input.list_monitors()
         self.sessions: set[ControllerSession] = set()
+        # Ulangan telefonlar: ular ham ekran beradi, ham buyruq bajaradi
+        self.remote_sources: dict[str, ControllerSession] = {}
         self.started_at = time.time()
 
         self.capture = ScreenCapture(caps, self._on_unit, monitors=self.monitors)
@@ -347,6 +451,95 @@ class HostContext:
             from ..platform import win_system
 
             self._system = win_system
+
+    # -- manbalar ----------------------------------------------------------
+
+    def sources_list(self) -> list[dict]:
+        """Ko'rish mumkin bo'lgan manbalar: kompyuterning o'zi va telefonlar."""
+        out = [{
+            "id": "local",
+            "name": self.cfg.host_name,
+            "kind": "pc",
+            "monitors": self.monitors,
+        }]
+        for key, sess in self.remote_sources.items():
+            info = dict(sess.source_info)
+            out.append({
+                "id": key,
+                "name": sess.name or info.get("name") or "telefon",
+                "kind": info.get("kind", "phone"),
+                "w": info.get("w"),
+                "h": info.get("h"),
+                "input": bool(info.get("input")),
+            })
+        return out
+
+    async def add_source(self, sess: "ControllerSession") -> None:
+        self.remote_sources[sess.source_key] = sess
+        log.info("manba qo'shildi: %s (%s)", sess.name, sess.source_key)
+        await self.broadcast_sources()
+
+    async def remove_source(self, sess: "ControllerSession") -> None:
+        if self.remote_sources.pop(sess.source_key, None) is None:
+            return
+        log.info("manba uzildi: %s", sess.name)
+        # Uni ko'rayotganlarni kompyuter ekraniga qaytaramiz
+        for s in list(self.sessions):
+            if s.source_id == sess.source_key:
+                s.source_id = "local"
+                try:
+                    await s.send_json({"t": "source_gone", "id": sess.source_key})
+                except Exception:
+                    pass
+        await self.broadcast_sources()
+        await self.sync_capture()
+
+    async def broadcast_sources(self) -> None:
+        msg = {"t": "sources", "list": self.sources_list()}
+        for s in list(self.sessions):
+            if s.is_source:
+                continue
+            try:
+                await s.send_json(msg)
+            except Exception:
+                pass
+
+    def viewers_of(self, source_id: str) -> list["ControllerSession"]:
+        return [s for s in self.sessions
+                if s.viewing and not s.is_source and s.source_id == source_id]
+
+    async def route_source_frame(self, sess: "ControllerSession", data: bytes) -> None:
+        """Telefondan kelgan kadrni uni ko'rayotganlarga uzatadi."""
+        for s in self.viewers_of(sess.source_key):
+            try:
+                s._queue.put_nowait(data)
+            except asyncio.QueueFull:
+                # Sekin tomoshabin butun oqimni sekinlashtirmasin
+                while not s._queue.empty():
+                    try:
+                        s._queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+
+    async def sync_sources(self) -> None:
+        """Har bir telefonga: seni kimdir ko'ryaptimi yo'qmi.
+
+        Hech kim ko'rmayotganda telefon ekranini olmaydi - batareya va
+        trafik bekorga sarflanmasin.
+        """
+        for key, sess in list(self.remote_sources.items()):
+            want = bool(self.viewers_of(key))
+            if want == getattr(sess, "_streaming", False):
+                continue
+            sess._streaming = want
+            s = self.cfg.stream
+            try:
+                await sess.send_json({
+                    "t": "stream_start" if want else "stream_stop",
+                    "fps": s.fps, "width": s.width, "bitrate": s.bitrate_kbps,
+                })
+            except Exception:
+                pass
 
     # -- ma'lumot ----------------------------------------------------------
 
@@ -420,6 +613,7 @@ class HostContext:
                 "commands": sorted(self._system.COMMANDS) if self._system else [],
                 "uptime": int(time.time() - self.started_at),
             },
+            "sources": self.sources_list(),
             "stream": {
                 "monitor": self.cfg.stream.monitor,
                 "monitor_map": self.cfg.stream.monitor_map,
@@ -488,7 +682,10 @@ class HostContext:
 
     async def detach(self, session: ControllerSession) -> None:
         self.sessions.discard(session)
+        if session.is_source:
+            await self.remove_source(session)
         await self.sync_capture()
+        await self.sync_sources()
         if not self.sessions and self._stats_task:
             self._stats_task.cancel()
             self._stats_task = None
@@ -499,7 +696,7 @@ class HostContext:
         Hech kim qaramayotganda ffmpeg umuman ishlamaydi - kompyuter bo'sh
         turganda dastur resurs yemasligi shundan.
         """
-        want = any(s.viewing for s in self.sessions)
+        want = bool(self.viewers_of("local"))
         if want and not self.capture.running:
             await self.capture.start(self._capture_config())
         elif want and changed:
@@ -525,7 +722,7 @@ class HostContext:
 
     def _on_unit(self, au: bytes, key: bool) -> None:
         ts = int(time.monotonic() * 1000)
-        for s in list(self.sessions):
+        for s in self.viewers_of("local"):
             s.offer_unit(au, key, ts)
 
     async def _stats_loop(self) -> None:

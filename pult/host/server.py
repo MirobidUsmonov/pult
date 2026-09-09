@@ -165,6 +165,10 @@ class HostServer:
                         continue
                     if isinstance(data, dict):
                         await session.handle(data)
+                elif msg.type == WSMsgType.BINARY:
+                    # Ikkilik ma'lumot faqat manbadan keladi: telefon
+                    # o'z ekranining kadrlarini shu yo'l bilan yuboradi.
+                    await session.on_binary(msg.data)
                 elif msg.type == WSMsgType.ERROR:
                     log.info("ws xatosi: %s", ws.exception())
         finally:
