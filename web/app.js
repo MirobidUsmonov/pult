@@ -1195,10 +1195,10 @@ addEventListener("keydown", (e) => {
 
 /* -------------------------------------------------------- tugmalar */
 
-$("btnDouble").addEventListener("click", () => {
-  link.send({ t: "mouse", a: "dblclick", b: "left" });
-  navigator.vibrate?.(10);
-});
+/* Ilgari bu yerda "2x" tugmasi bor edi - ikki marta bosish uchun.
+ * Olib tashlandi: yozuvi "ikki" bo'lgani uchun uni ikkita ekranni
+ * birga ko'rish tugmasi deb tushunish oson edi, foydasi esa yo'q -
+ * ikki marta tegish imo-ishorasi allaqachon bor. */
 
 /* -- ko'rinish tugmalari ------------------------------------------------ */
 
