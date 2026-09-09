@@ -115,7 +115,23 @@ public class ScreenService extends Service {
         }
 
         running = true;
-        connect(url, token, pin);
+        // Manzilni shu yerda tanlaymiz, ro'yxatdagi yozuvdan emas:
+        // ekran uzatish uzoq davom etadi va sekin yo'ldan ketishi
+        // ayniqsa qimmatga tushadi. Tekshiruv tarmoq ishi bo'lgani
+        // uchun alohida oqimda.
+        final String fallback = url;
+        new Thread(() -> {
+            String best = fallback;
+            Hosts.Host known = new Hosts(this).find(fallback);
+            if (known != null && known.candidates().size() > 1) {
+                String picked = Reach.pick(known, this);
+                if (picked != null) best = picked;
+            }
+            final String chosen = best;
+            main.post(() -> {
+                if (running) connect(chosen, token, pin);
+            });
+        }, "pult-reach-src").start();
         return START_NOT_STICKY;
     }
 

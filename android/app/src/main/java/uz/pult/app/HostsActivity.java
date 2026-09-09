@@ -155,6 +155,14 @@ public class HostsActivity extends Activity {
 
         TextView url = new TextView(this);
         String note = h.url;
+        // Ikkala yo'l ham ma'lum bo'lsa buni aytamiz: foydalanuvchi
+        // boshqa tarmoqqa o'tganda ham ishlashini oldindan bilib
+        // tursin, "ishlamay qoldi" deb o'ylamasin.
+        int far = 0;
+        for (String u : h.urls) {
+            if (!Hosts.isLocal(u)) far++;
+        }
+        if (far > 0 && Hosts.isLocal(h.url)) note += "  ·  internet orqali ham";
         if (h.pin.isEmpty()) note += "  ·  sertifikat hali tasdiqlanmagan";
         url.setText(note);
         url.setTextColor(MUTED);
@@ -288,8 +296,38 @@ public class HostsActivity extends Activity {
                     Toast.LENGTH_LONG).show();
             return;
         }
+        // Qaysi manzil ishlashini oldindan aniqlaymiz: bitta Wi-Fi
+        // ichida mahalliy manzil tunneldan ancha tez, boshqa
+        // tarmoqdan esa faqat tunnel ishlaydi. Tekshiruv tarmoq ishi
+        // bo'lgani uchun alohida oqimda bajariladi.
+        if (h.candidates().size() < 2) {
+            launch(h, h.url);
+            return;
+        }
+        Toast.makeText(this, "Ulanish yo‘li tanlanmoqda…", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            String best = Reach.pick(h, this);
+            runOnUiThread(() -> {
+                if (best == null) {
+                    // Hech biri javob bermadi. Baribir oxirgi ishlagan
+                    // manzilni ochamiz - u yerdagi xato oynasi
+                    // sababini aniqroq tushuntiradi.
+                    launch(h, h.url);
+                } else {
+                    if (!Hosts.strip(best).equals(Hosts.strip(h.url))) {
+                        Toast.makeText(this, Hosts.isLocal(best)
+                                ? "Wi-Fi orqali ulanmoqda" : "Internet orqali ulanmoqda",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                    launch(h, best);
+                }
+            });
+        }, "pult-reach").start();
+    }
+
+    private void launch(Hosts.Host h, String base) {
         Intent i = new Intent(this, RemoteActivity.class);
-        i.putExtra(RemoteActivity.EXTRA_URL, h.fullUrl());
+        i.putExtra(RemoteActivity.EXTRA_URL, h.fullUrl(base));
         startActivity(i);
     }
 
@@ -359,11 +397,42 @@ public class HostsActivity extends Activity {
 
     /** pult:// yoki https:// havolasi bilan ochilgan bo'lsa. */
     private boolean handleIncomingLink(Intent intent) {
-        if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) return false;
-        Uri data = intent.getData();
-        if (data == null) return false;
-        addFromLink(data.toString());
-        return true;
+        if (intent == null) return false;
+        String action = intent.getAction();
+
+        if (Intent.ACTION_VIEW.equals(action)) {
+            Uri data = intent.getData();
+            if (data == null) return false;
+            addFromLink(data.toString());
+            return true;
+        }
+
+        // "Ulashish" orqali kelgan matn: Telegramdagi xabarda havola
+        // boshqa so'zlar bilan birga bo'ladi, shuning uchun uni
+        // matndan ajratib olamiz.
+        if (Intent.ACTION_SEND.equals(action)) {
+            String text = intent.getStringExtra(Intent.EXTRA_TEXT);
+            String link = firstLink(text);
+            if (link == null) {
+                Toast.makeText(this, "Bu matnda Pult havolasi topilmadi",
+                        Toast.LENGTH_LONG).show();
+                return true;
+            }
+            addFromLink(link);
+            return true;
+        }
+        return false;
+    }
+
+    /** Matndagi birinchi http(s) havolani qaytaradi. */
+    private static String firstLink(String text) {
+        if (text == null) return null;
+        for (String word : text.split("\\s+")) {
+            if (word.startsWith("http://") || word.startsWith("https://")) {
+                return word;
+            }
+        }
+        return null;
     }
 
     // ------------------------------------------------------------ yordamchi

@@ -440,6 +440,8 @@ class HostContext:
         self.sessions: set[ControllerSession] = set()
         # Ulangan telefonlar: ular ham ekran beradi, ham buyruq bajaradi
         self.remote_sources: dict[str, ControllerSession] = {}
+        self._addr_cache: list[str] | None = None
+        self._addr_at = 0.0
         self.started_at = time.time()
 
         self.capture = ScreenCapture(caps, self._on_unit, monitors=self.monitors)
@@ -600,6 +602,31 @@ class HostContext:
         bx, by, bw, bh = bounds
         self.input.move_to(bx + bw // 2, by + bh // 2)
 
+    def addresses(self) -> list[str]:
+        """Shu agentga yetib boradigan manzillar, tez-sekin tartibida.
+
+        Mahalliy manzillar oldinda: bitta tarmoqda bo'lganda ular
+        tunneldan bir necha barobar tez va kechikishi kam. Tunnel
+        oxirida - u har joydan ishlaydi, lekin trafik Cloudflare
+        orqali aylanib o'tadi.
+        """
+        from ..config import local_addresses
+
+        # Mahalliy manzillarni aniqlash tarmoq so'rovi talab qiladi va
+        # bu har ulanishda takrorlanardi. IP manzillar esa kamdan-kam
+        # o'zgaradi, shuning uchun qisqa muddatga saqlab turamiz.
+        # Tunnel manzili keshdan tashqarida - u tez-tez yangilanadi.
+        now = time.monotonic()
+        if self._addr_cache is None or now - self._addr_at > 30:
+            scheme = "http" if self.cfg.tls == "off" else "https"
+            self._addr_cache = list(local_addresses(self.cfg.port, scheme))
+            self._addr_at = now
+
+        out = list(self._addr_cache)
+        if self.cfg.public_url:
+            out.append(self.cfg.public_url.rstrip("/"))
+        return out
+
     def hello_message(self) -> dict:
         return {
             "t": "hello",
@@ -612,6 +639,13 @@ class HostContext:
                 "encoders": sorted(e for e in self.caps.encoders if "264" in e),
                 "commands": sorted(self._system.COMMANDS) if self._system else [],
                 "uptime": int(time.time() - self.started_at),
+                # Shu kompyuterga yetib boradigan barcha manzillar.
+                # Telefon shundan eng tezini o'zi tanlaydi: bitta
+                # tarmoqda bo'lsa mahalliy manzil tunneldan ancha
+                # tez, boshqa tarmoqda esa faqat tunnel ishlaydi.
+                # Tunnel manzili har ishga tushganda yangi bo'lgani
+                # uchun uni har ulanishda qaytadan aytish shart.
+                "addresses": self.addresses(),
             },
             "sources": self.sources_list(),
             "stream": {

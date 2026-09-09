@@ -85,10 +85,15 @@ def phone_url(cfg: cfgmod.Config) -> str:
     Tunnel sozlangan bo'lsa tashqi manzil afzal: u har joydan ishlaydi
     va haqiqiy sertifikatga ega.
     """
+    # Kompyuter raqami ham qo'shiladi: tunnel manzili har safar
+    # o'zgargani uchun ilova havolani ko'rib, qaysi kompyuter ekanini
+    # va qaysi yozuvni yangilash kerakligini shundan biladi. Raqam sir
+    # emas - u kalitsiz /api/info da ham ko'rinadi.
+    tail = f"/#k={cfg.token}&h={cfg.host_id}"
     if cfg.public_url:
-        return f"{cfg.public_url.rstrip('/')}/#k={cfg.token}"
+        return f"{cfg.public_url.rstrip('/')}{tail}"
     scheme = "http" if cfg.tls == "off" else "https"
-    return f"{cfgmod.local_addresses(cfg.port, scheme)[0]}/#k={cfg.token}"
+    return f"{cfgmod.local_addresses(cfg.port, scheme)[0]}{tail}"
 
 
 def connection_info(cfg: cfgmod.Config) -> list[str]:

@@ -37,6 +37,29 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="pult" />
             </intent-filter>
+            <!-- Telegramga kelgan tunnel havolasi. Tunnel manzili
+                 kompyuter har qayta yonganda o'zgaradi, shuning uchun
+                 uni ilovaga qo'lda ko'chirish o'rniga havolani bosish
+                 kifoya: Android "Pult bilan ochish" ni taklif qiladi
+                 va ilova manzilni o'zi yangilaydi.
+
+                 Domen bizniki emas, shuning uchun autoVerify yo'q -
+                 Android tanlov oynasini ko'rsatadi. Bu to'g'ri: hamma
+                 trycloudflare havolalarini ushlab olish noto'g'ri
+                 bo'lardi. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="*.trycloudflare.com" />
+            </intent-filter>
+            <!-- Havolani "Ulashish" orqali yuborish ham ishlaydi: bu
+                 har qanday tunnel yoki domen uchun yagona umumiy yo'l. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
 
         <!-- Ekranni uzatuvchi xizmat. mediaProjection turi majburiy:

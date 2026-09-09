@@ -139,8 +139,28 @@ public class RemoteActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 status.setVisibility(View.GONE);
+                refreshAddresses();
             }
         });
+    }
+
+    /**
+     * Agentdan uning barcha manzillarini so'rab, ro'yxatni yangilaydi.
+     *
+     * Tunnel manzili kompyuter har qayta yonganda o'zgaradi. Agar
+     * ro'yxat yangilanmasa, telefon keyingi safar eskirgan manzilni
+     * sinab, uzoq kutib, keyin ulanolmay qolardi. Ulanish
+     * muvaffaqiyatli bo'lgan payt - ro'yxatni yangilash uchun eng
+     * to'g'ri payt.
+     */
+    private void refreshAddresses() {
+        final Hosts.Host known = hosts.find(serverUrl);
+        if (known == null || known.token.isEmpty()) return;
+        new Thread(() -> {
+            Reach.Info info = Reach.info(serverUrl, known.token, known.pin);
+            if (info == null) return;
+            hosts.remember(info.id, serverUrl, info.addresses);
+        }, "pult-addresses").start();
     }
 
     /**
