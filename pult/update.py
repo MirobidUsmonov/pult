@@ -156,9 +156,28 @@ def cleanup(folder: Path) -> None:
             pass
 
 
+def clean_env() -> dict:
+    """PyInstaller'ning ichki o'zgaruvchilaridan tozalangan muhit.
+
+    Bitta faylga yig'ilgan dastur o'z holatini muhit o'zgaruvchilari
+    orqali uzatadi (_PYI_..., _MEIPASS2). Dastur o'z ichidan yana
+    o'zini ishga tushirsa, ular meros bo'lib o'tadi va yangi nusxa
+    o'zini "bola jarayon" deb o'ylab qoladi. So'ng otasini tekshiradi
+    va "parent process has different executable" deb xato beradi -
+    ayniqsa yangilanishdan keyin, otaning fayli chetga surilgan
+    bo'lgani uchun. Shuning uchun ularni olib tashlaymiz.
+    """
+    env = dict(os.environ)
+    for key in list(env):
+        if key.startswith("_PYI_") or key in ("_MEIPASS2", "_MEIPASS"):
+            env.pop(key, None)
+    return env
+
+
 def relaunch(exe: Path) -> None:
     try:
-        subprocess.Popen([str(exe)], cwd=str(exe.parent), creationflags=NO_WINDOW)
+        subprocess.Popen([str(exe)], cwd=str(exe.parent),
+                         creationflags=NO_WINDOW, env=clean_env())
     except Exception:
         log.exception("yangi versiya ishga tushmadi")
 

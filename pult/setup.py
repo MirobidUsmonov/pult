@@ -438,8 +438,13 @@ def uninstall() -> str:
 
 def launch(exe: Path, pair: bool = True) -> None:
     """O'rnatilgan nusxani ishga tushiradi va telefonni ulash sahifasini ochadi."""
+    from .update import clean_env
+
     try:
-        subprocess.Popen([str(exe)], cwd=str(exe.parent), creationflags=NO_WINDOW)
+        # Muhit tozalanadi: PyInstaller o'zgaruvchilari meros bo'lib
+        # o'tsa yangi nusxa o'zini bola jarayon deb o'ylab, xato beradi
+        subprocess.Popen([str(exe)], cwd=str(exe.parent),
+                         creationflags=NO_WINDOW, env=clean_env())
     except Exception:
         log.exception("ishga tushirib bo'lmadi")
         return

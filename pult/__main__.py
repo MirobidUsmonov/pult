@@ -175,9 +175,16 @@ def main() -> int:
     # boshqa hech narsa kerak emas.
     if getattr(sys, "frozen", False):
         from . import setup as setupmod
+        from . import single
         from . import update as updatemod
 
         if setupmod.first_run():
+            return 0
+
+        # Bitta nusxa bas. Kutish vaqti bor, chunki yangilanishdan
+        # keyin eski nusxa chiqib ulgurmagan bo'lishi mumkin.
+        if not single.acquire(timeout=20):
+            logging.info("boshqa nusxa allaqachon ishlayapti - chiqamiz")
             return 0
 
         # Yangi versiya bo'lsa o'zini almashtirib qayta ishga tushadi.

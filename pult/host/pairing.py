@@ -18,6 +18,16 @@ from urllib.parse import quote
 
 from ..config import Config
 
+# Ataylab yuqorida, funksiya ichida emas. Bitta faylga yig'ilgan dastur
+# modullarni o'z .exe faylidan o'qiydi; o'z-o'zini yangilash o'sha
+# faylni almashtiradi. Shundan keyin kech import qilingan modul
+# o'qilmay qoladi ("incorrect header check"). Ishga tushishda import
+# qilinsa, bunday xavf yo'q.
+try:
+    import segno
+except ImportError:  # pragma: no cover - QR ixtiyoriy qulaylik
+    segno = None
+
 
 def responsive(svg: str) -> str:
     """SVG'ga viewBox qo'shib, qat'iy o'lchamini olib tashlaydi.
@@ -44,9 +54,7 @@ def responsive(svg: str) -> str:
 
 
 def qr_svg(data: str, scale: int = 8) -> str:
-    try:
-        import segno
-    except ImportError:
+    if segno is None:
         return '<p class="warn">QR kod uchun "segno" kutubxonasi kerak: pip install segno</p>'
 
     # segno SVG'ni bayt oqimiga yozadi, shuning uchun BytesIO
