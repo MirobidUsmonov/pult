@@ -76,14 +76,57 @@ public class HostsActivity extends Activity {
         super.onResume();
         refresh();
 
-        // Sozlamalardan ruxsat berib qaytdi - to'xtagan joyidan davom
-        // etamiz. Aks holda odam yana kartaga qaytib, ⇧ ni qaytadan
-        // bosishi kerak bo'lardi va nima uchunligi tushunarsiz qolardi.
-        if (pendingAccess != null && InputService.get() != null) {
+        // Sozlamalardan qaytdi - nima bo'lganini tekshiramiz
+        if (pendingAccess != null) {
             Hosts.Host h = pendingAccess;
             pendingAccess = null;
-            Toast.makeText(this, "Ruxsat berildi", Toast.LENGTH_SHORT).show();
-            requestProjection(h);
+            if (InputService.get() != null) {
+                // Ruxsat berildi - to'xtagan joyidan davom etamiz. Aks
+                // holda odam kartaga qaytib, ⇧ ni qaytadan bosishi
+                // kerak bo'lardi va nima uchunligi tushunarsiz qolardi.
+                Toast.makeText(this, "Ruxsat berildi", Toast.LENGTH_SHORT).show();
+                requestProjection(h);
+            } else {
+                explainRestricted();
+            }
+        }
+    }
+
+    /**
+     * Android 13 dan boshlab paydo bo'lgan "cheklangan sozlama" to'sig'i.
+     *
+     * Play Market'dan tashqarida o'rnatilgan ilovaga maxsus imkoniyatlarni
+     * yoqishga ruxsat berilmaydi: sozlamalar sahifasida qator ko'rinadi,
+     * lekin xira va bosilmaydi, "App was denied access" oynasi chiqadi.
+     *
+     * Buni ilova ichidan hal qilib bo'lmaydi - bu ataylab qo'yilgan
+     * himoya va uni faqat foydalanuvchi ilova sahifasidagi menyudan
+     * ocha oladi. Bizning qo'limizdan keladigani - qayerga borishni
+     * aniq aytish va o'sha sahifani ochib berish.
+     */
+    private void explainRestricted() {
+        if (android.os.Build.VERSION.SDK_INT < 33) return;
+        new AlertDialog.Builder(this)
+                .setTitle("Android yo‘l bermadi")
+                .setMessage("«Cheklangan sozlama» himoyasi ishga tushdi — u "
+                        + "Play Market’dan tashqarida o‘rnatilgan ilovalarga "
+                        + "maxsus imkoniyatlarni yoqishga to‘sqinlik qiladi.\n\n"
+                        + "Ochish uchun:\n"
+                        + "1. Tugmani bosing — Pult sahifasi ochiladi\n"
+                        + "2. O‘ng yuqoridagi ⋮ menyusini bosing\n"
+                        + "3. «Allow restricted settings» ni tanlang\n"
+                        + "4. Qaytib kelib, yana «Yoqish» ni bosing")
+                .setPositiveButton("Pult sahifasini ochish", (d, w) -> openAppDetails())
+                .setNegativeButton("Keyinroq", null)
+                .show();
+    }
+
+    private void openAppDetails() {
+        Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.fromParts("package", getPackageName(), null));
+        if (!tryStart(i)) {
+            Toast.makeText(this, "Ilova sahifasini ochib bo‘lmadi",
+                    Toast.LENGTH_LONG).show();
         }
     }
 
