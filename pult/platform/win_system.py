@@ -1,8 +1,8 @@
 """
-Windows tizim buyruqlari: qulflash, uxlatish, o'chirish, dastur ochish.
+Windows system commands: lock, sleep, shut down, launch a program.
 
-Bularning hammasi sozlamalarda o'chirilishi mumkin (security.allow_commands) -
-kimdir dasturni faqat kuzatish uchun ishlatmoqchi bo'lsa.
+All of these can be switched off in the settings
+(security.allow_commands) for anyone who wants viewing only.
 """
 from __future__ import annotations
 
@@ -30,15 +30,15 @@ def lock() -> None:
 
 
 def display_off() -> None:
-    """Monitorlarni o'chiradi (kompyuter ishlashda davom etadi)."""
+    """Turns the monitors off (the computer keeps running)."""
     user32.SendMessageW(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)
 
 
 def display_on() -> None:
-    """Monitorni uyg'otadi.
+    """Wakes the monitor.
 
-    SC_MONITORPOWER bilan yoqish ishonchsiz, shuning uchun sichqonchani
-    bir piksel qimirlatamiz - bu tizimni har doim uyg'otadi.
+    Turning it back on with SC_MONITORPOWER is unreliable, so we nudge
+    the mouse by one pixel instead - that always wakes the system.
     """
     from . import win_input as wi
 
@@ -48,7 +48,7 @@ def display_on() -> None:
 
 
 def sleep() -> None:
-    # Ikkinchi argument 0 = uxlash (1 bo'lsa hibernate)
+    # Second argument 0 = sleep (1 would be hibernate)
     _run(["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"])
 
 
@@ -73,18 +73,18 @@ def cancel_shutdown() -> None:
 
 
 def run_program(command: str) -> None:
-    """Dastur yoki faylni ochadi.
+    """Opens a program or a file.
 
-    shell=True ataylab: shunda "notepad", "C:\\papka", "https://..." va
-    ".mp4" fayli - hammasi bir xil ishlaydi, Windows o'zi mos dasturni
-    tanlaydi.
+    shell=True is deliberate: it makes "notepad", "C:\\folder",
+    "https://..." and an ".mp4" file all work the same way, with Windows
+    picking the right program for each.
     """
     subprocess.Popen(command, shell=True, creationflags=_NO_WINDOW,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def foreground_window_title() -> str:
-    """Hozir faol oynaning sarlavhasi. AI agent uchun foydali kontekst."""
+    """Title of the window in the foreground. Useful context for an AI agent."""
     hwnd = user32.GetForegroundWindow()
     if not hwnd:
         return ""

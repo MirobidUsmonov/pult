@@ -28,13 +28,14 @@ import org.json.JSONObject;
 import java.nio.ByteBuffer;
 
 /**
- * Telefon ekranini kompyuterga uzatadi va kelgan buyruqlarni bajaradi.
+ * Shares the phone screen with the computer and carries out the commands
+ * that come back.
  *
- * Ekran MediaProjection orqali olinadi va MediaCodec bilan telefonning
- * o'z apparat kodlagichida H.264 ga o'giriladi - protsessor deyarli
- * ishlatilmaydi va batareya tejaladi. Natija kompyuterdagi oqim bilan
- * bir xil ko'rinishda uzatiladi, shuning uchun kompyuter tarafida
- * alohida kod kerak emas.
+ * The screen is captured through MediaProjection and turned into H.264
+ * by MediaCodec on the phone's own hardware encoder - the CPU is barely
+ * touched and battery is saved. The result is sent in exactly the same
+ * shape as the computer's own stream, so the computer side needs no
+ * separate code.
  */
 public class ScreenService extends Service {
 
@@ -64,19 +65,19 @@ public class ScreenService extends Service {
     private Thread drainThread;
     private volatile boolean streaming = false;
 
-    private byte[] csd;              // SPS va PPS
+    private byte[] csd;              // SPS and PPS
     private String codecString = "";
     private int outW, outH;
-    private String hostName = "Telefon";
+    private String hostName = "Phone";
 
-    // Ulanish ma'lumotlari saqlanadi: uzilganda qayta ulanish kerak
+    // The connection details are kept: a drop means reconnecting
     private String baseUrl, token, pin;
     private int attempt = 0;
-    /** Foydalanuvchi to'xtatganmi. Shunda qayta ulanmaymiz. */
+    /** Whether the user stopped it. Then we do not reconnect. */
     private volatile boolean stopped = false;
 
-    // Ekran o'chganda tizim protsessorni va Wi-Fi ni uxlatadi -
-    // ulanish uziladi. Qulflar shuni to'xtatadi.
+    // With the screen off the system puts the CPU and Wi-Fi to sleep
+    // and the connection drops. These locks prevent that.
     private android.os.PowerManager.WakeLock wakeLock;
     private android.net.wifi.WifiManager.WifiLock wifiLock;
 
@@ -94,13 +95,13 @@ public class ScreenService extends Service {
             return START_NOT_STICKY;
         }
         if (ACTION_STOP.equals(intent.getAction())) {
-            report("foydalanuvchi to'xtatdi");
+            report("the user stopped it");
             stopEverything();
             return START_NOT_STICKY;
         }
 
-        // Android 14 dan boshlab ekran olishdan OLDIN xizmat oldingi
-        // planda bo'lishi shart, aks holda tizim ruxsat bermaydi.
+        // From Android 14 on, the service has to be in the foreground
+        // BEFORE capture starts, or the system refuses.
         startForegroundNotice();
 
         String url = intent.getStringExtra(EXTRA_URL);
@@ -119,11 +120,11 @@ public class ScreenService extends Service {
                 projection.registerCallback(new MediaProjection.Callback() {
                     @Override
                     public void onStop() {
-                        Log.i(TAG, "ekran olish tizim tomonidan to'xtatildi");
-                        // Sababni kompyuterga aytamiz: telefon logini
-                        // ko'rish uchun kabel va dasturchi rejimi
-                        // kerak, kompyuter logi esa doim qo'l ostida
-                        report("tizim ekran olishni to'xtatdi (MediaProjection.onStop)");
+                        Log.i(TAG, "capture was stopped by the system");
+                        // Tell the computer why: reading the phone's log
+                        // needs a cable and developer mode, while the
+                        // computer's log is always at hand
+                        report("the system stopped capture (MediaProjection.onStop)");
                         stopEverything();
                     }
                 }, main);
@@ -134,10 +135,10 @@ public class ScreenService extends Service {
         stopped = false;
         attempt = 0;
         holdLocks();
-        // Manzilni shu yerda tanlaymiz, ro'yxatdagi yozuvdan emas:
-        // ekran uzatish uzoq davom etadi va sekin yo'ldan ketishi
-        // ayniqsa qimmatga tushadi. Tekshiruv tarmoq ishi bo'lgani
-        // uchun alohida oqimda.
+        // The address is picked here rather than taken from the stored
+        // entry: screen sharing lasts a long time and going down a slow
+        // route is especially costly. The check is network work, so it
+        // runs on its own thread.
         final String fallback = url;
         new Thread(() -> {
             String best = fallback;
@@ -156,22 +157,23 @@ public class ScreenService extends Service {
 
     @Override
     public void onDestroy() {
-        // Xizmat tizim tomonidan o'ldirilayotgan bo'lishi mumkin -
-        // Samsung'da batareya tejash shunday qiladi. Sababni
-        // bilishning yagona yo'li shu xabar.
-        if (running) report("xizmat to'xtatilmoqda (onDestroy)");
+        // The service may be being killed by the system - that is what
+        // battery saving does on Samsung. This message is the only way
+        // to learn the reason.
+        if (running) report("the service is stopping (onDestroy)");
         stopEverything();
         super.onDestroy();
     }
 
-    // ------------------------------------------------------------ ulanish
+    // --------------------------------------------------------- connection
 
     /**
-     * Muhim voqeani kompyuterga aytadi - u kompyuter logida ko'rinadi.
+     * Reports an event that matters to the computer, where it shows up
+     * in the computer's log.
      *
-     * Telefonda nima bo'layotganini bilish qiyin: logini ko'rish uchun
-     * kabel va dasturchi rejimi kerak. Kompyuter logi esa doim
-     * ochiq, shuning uchun sabablar o'sha yerga yuboriladi.
+     * It is hard to tell what is happening on the phone: reading its log
+     * needs a cable and developer mode. The computer's log is always
+     * open, so the reasons are sent there.
      */
     private void report(String text) {
         try {
@@ -183,26 +185,26 @@ public class ScreenService extends Service {
         }
     }
 
-    /** Uzilgan ulanishni qayta tiklaydi - vaqti asta uzayadi. */
+    /** Restores a dropped connection, waiting a little longer each time. */
     private void scheduleReconnect(String reason) {
         attempt++;
-        // Umuman tiklanmasa ham cheksiz urinmaymiz: Android tepada
-        // "ekran uzatilmoqda" belgisini ko'rsatib turadi va hech narsa
-        // uzatilmayotgan bo'lsa bu faqat chalg'itadi.
+        // Do not retry forever when it never comes back: Android keeps
+        // showing the "sharing your screen" indicator at the top, and
+        // with nothing being shared that is only misleading.
         if (attempt > 20) {
             stopEverything();
-            doneNotice("Aloqa tiklanmadi — ekran uzatish to‘xtadi");
+            doneNotice("The connection did not come back \u2014 sharing stopped");
             return;
         }
         long delay = Math.min(1000L * attempt, 15000L);
-        notice("Aloqa uzildi, qayta ulanmoqda… (" + reason + ")");
-        Log.i(TAG, "qayta ulanish " + attempt + ", " + delay + " ms dan keyin");
+        notice("The connection dropped, reconnecting\u2026 (" + reason + ")");
+        Log.i(TAG, "reconnect " + attempt + ", in " + delay + " ms");
         main.postDelayed(() -> {
             if (!running || stopped) return;
-            // Manzil qaytadan tanlanadi, eskisiga yopishib olmaymiz.
-            // Ekran o'chganda telefon Wi-Fi dan mobil internetga o'tishi
-            // mumkin - o'shanda mahalliy manzil boshqa hech qachon
-            // ishlamaydi va bir xil manzilga urinish behuda ketardi.
+            // The address is chosen afresh; we do not cling to the old
+            // one. With the screen off the phone may move from Wi-Fi to
+            // mobile data, and then the local address will never work
+            // again and retrying it is wasted effort.
             final String last = baseUrl;
             new Thread(() -> {
                 String best = last;
@@ -213,13 +215,13 @@ public class ScreenService extends Service {
                         if (picked != null) best = picked;
                     }
                 } catch (Exception e) {
-                    Log.w(TAG, "manzil tanlanmadi: " + e);
+                    Log.w(TAG, "no address chosen: " + e);
                 }
                 final String chosen = best;
                 main.post(() -> {
                     if (!running || stopped) return;
                     if (!chosen.equals(last)) {
-                        Log.i(TAG, "boshqa manzilga o'tamiz: " + chosen);
+                        Log.i(TAG, "moving to another address: " + chosen);
                     }
                     connect(chosen, token, pin);
                 });
@@ -235,9 +237,9 @@ public class ScreenService extends Service {
         ws = new WsClient(wsUrl, pin, new WsClient.Listener() {
             @Override
             public void onOpen() {
-                Log.i(TAG, "kompyuterga ulandi");
+                Log.i(TAG, "connected to the computer");
                 attempt = 0;
-                notice("Kompyuterga ulandi");
+                notice("Connected to the computer");
                 sendHello();
             }
 
@@ -248,12 +250,12 @@ public class ScreenService extends Service {
 
             @Override
             public void onClosed(String reason) {
-                Log.i(TAG, "ulanish yopildi: " + reason);
+                Log.i(TAG, "connection closed: " + reason);
                 if (!running || stopped) return;
-                // Uzilish ko'pincha vaqtinchalik: telefon ekrani
-                // o'chganda tarmoq bir lahzaga uxlaydi. Darhol
-                // to'xtatib qo'ysak, ekranni bir marta o'chirib
-                // yoqishning o'zi uzatishni butunlay tugatardi.
+                // A drop is usually temporary: the network dozes for a
+                // moment when the phone screen turns off. Stopping
+                // immediately meant that switching the screen off and
+                // on once ended sharing for good.
                 main.post(() -> {
                     if (!running || stopped) return;
                     stopStream();
@@ -281,11 +283,11 @@ public class ScreenService extends Service {
                     .put("info", info)
                     .toString());
         } catch (Exception e) {
-            Log.w(TAG, "hello yuborilmadi: " + e);
+            Log.w(TAG, "hello not sent: " + e);
         }
     }
 
-    // ------------------------------------------------------- kiruvchi xabarlar
+    // ---------------------------------------------------- incoming messages
 
     private void handle(String text) {
         try {
@@ -320,7 +322,7 @@ public class ScreenService extends Service {
                     break;
             }
         } catch (Exception e) {
-            Log.w(TAG, "xabar tushunilmadi: " + e);
+            Log.w(TAG, "message not understood: " + e);
         }
     }
 
@@ -331,13 +333,13 @@ public class ScreenService extends Service {
     private void input(InputAction action) {
         InputService s = InputService.get();
         if (s == null) {
-            notice("Boshqarish uchun maxsus imkoniyatlar xizmatini yoqing");
+            notice("Turn on the accessibility service to allow control");
             return;
         }
         try {
             action.run(s);
         } catch (Exception e) {
-            Log.w(TAG, "kiritish bajarilmadi: " + e);
+            Log.w(TAG, "input not carried out: " + e);
         }
     }
 
@@ -389,12 +391,12 @@ public class ScreenService extends Service {
         });
     }
 
-    // ---------------------------------------------------------- ekran oqimi
+    // -------------------------------------------------------- screen stream
 
     private void startStream(int maxSide, int fps, int bitrateKbps) {
         if (streaming) return;
         if (projection == null) {
-            notice("Ekran olishga ruxsat berilmagan");
+            notice("Screen capture was not allowed");
             return;
         }
         try {
@@ -403,9 +405,9 @@ public class ScreenService extends Service {
                     .getRealMetrics(dm);
             int sw = dm.widthPixels, sh = dm.heightPixels;
 
-            // Uzun tomonni so'ralgan o'lchamga tushiramiz. 16 ga
-            // yaxlitlash kerak: ba'zi kodlagichlar boshqa o'lchamda
-            // ishlamaydi yoki rasmni buzadi.
+            // Bring the long side down to the requested size. Rounding
+            // to 16 is necessary: some encoders refuse other sizes or
+            // corrupt the picture.
             if (maxSide <= 0) maxSide = Math.max(sw, sh);
             double scale = Math.min(1.0, (double) maxSide / Math.max(sw, sh));
             outW = round16((int) (sw * scale));
@@ -438,11 +440,11 @@ public class ScreenService extends Service {
             drainThread = new Thread(this::drain, "pult-encoder");
             drainThread.setDaemon(true);
             drainThread.start();
-            Log.i(TAG, "oqim boshlandi " + outW + "x" + outH + " " + fps + " k/s");
-            notice("Ekran uzatilmoqda");
+            Log.i(TAG, "stream started " + outW + "x" + outH + " " + fps + " fps");
+            notice("Sharing the screen");
         } catch (Exception e) {
-            Log.e(TAG, "oqim boshlanmadi", e);
-            notice("Ekranni uzatib bo'lmadi");
+            Log.e(TAG, "the stream did not start", e);
+            notice("The screen could not be shared");
             stopStream();
         }
     }
@@ -474,11 +476,12 @@ public class ScreenService extends Service {
     }
 
     /**
-     * Kodlagichdan chiqqan kadrlarni o'qib, kompyuterga yuboradi.
+     * Reads the frames coming out of the encoder and sends them to the
+     * computer.
      *
-     * Sarlavha kompyuterdagi bilan bir xil: tur, bayroqlar, vaqt. Shu
-     * tufayli kompyuter tarafida telefon oqimi uchun alohida kod yozish
-     * kerak bo'lmadi.
+     * The header is the same as the computer's: kind, flags, timestamp.
+     * That is why the computer side needed no separate code for the
+     * phone's stream.
      */
     private void drain() {
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
@@ -529,8 +532,8 @@ public class ScreenService extends Service {
                     continue;
                 }
 
-                // Kalit kadrga SPS/PPS ni oldiga qo'shamiz: yangi
-                // tomoshabin ular bilan dekoderni sozlay oladi.
+                // Prepend the SPS/PPS to a key frame: a new viewer can
+                // configure its decoder from them.
                 int extra = (isKey && csd != null) ? csd.length : 0;
                 byte[] out = new byte[8 + extra + info.size];
                 int ts = (int) (System.currentTimeMillis() - startedAt);
@@ -550,9 +553,9 @@ public class ScreenService extends Service {
                 }
                 encoder.releaseOutputBuffer(index, false);
             } catch (IllegalStateException e) {
-                break;   // kodlagich to'xtatildi
+                break;   // the encoder was stopped
             } catch (Exception e) {
-                Log.w(TAG, "kadr yuborilmadi: " + e);
+                Log.w(TAG, "frame not sent: " + e);
             }
         }
     }
@@ -566,23 +569,24 @@ public class ScreenService extends Service {
                     .put("w", outW)
                     .put("h", outH)
                     .put("fps", 30)
-                    .put("encoder", "Telefon (apparat)")
+                    .put("encoder", "Phone (hardware)")
                     .toString());
         } catch (Exception ignored) {
         }
     }
 
-    // ------------------------------------------------------------ xizmat
+    // ------------------------------------------------------------ service
 
     private void startForegroundNotice() {
         NotificationManager nm = getSystemService(NotificationManager.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel ch = new NotificationChannel(
-                    CHANNEL, "Ekran uzatish", NotificationManager.IMPORTANCE_LOW);
-            ch.setDescription("Telefon ekrani kompyuterga uzatilayotganda ko'rinadi");
+                    CHANNEL, "Screen sharing", NotificationManager.IMPORTANCE_LOW);
+            ch.setDescription("Shown while the phone screen is being shared "
+                    + "with the computer");
             nm.createNotificationChannel(ch);
         }
-        startForeground(NOTIF_ID, buildNotification("Kompyuterga ulanmoqda…"));
+        startForeground(NOTIF_ID, buildNotification("Connecting to the computer\u2026"));
     }
 
     private Notification buildNotification(String text) {
@@ -594,21 +598,21 @@ public class ScreenService extends Service {
         Notification.Builder b = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 ? new Notification.Builder(this, CHANNEL)
                 : new Notification.Builder(this);
-        return b.setContentTitle("Pult — ekran uzatish")
+        return b.setContentTitle("Pult \u2014 screen sharing")
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.ic_menu_view)
                 .setOngoing(true)
                 .addAction(new Notification.Action.Builder(
-                        null, "To'xtatish", stopPi).build())
+                        null, "Stop", stopPi).build())
                 .build();
     }
 
     /**
-     * Uzatish tugaganini bildiradi.
+     * Says that sharing has finished.
      *
-     * Alohida raqam bilan: stopForeground asosiy xabarnomani o'chirib
-     * yuboradi, shuning uchun uni o'sha raqamga yozib bo'lmaydi. Bu
-     * xabar o'tkinchi - bosilsa yo'qoladi.
+     * Under a separate id: stopForeground removes the main notification,
+     * so this cannot be written to the same id. The message is
+     * transient - tapping it dismisses it.
      */
     private void doneNotice(String text) {
         try {
@@ -635,17 +639,18 @@ public class ScreenService extends Service {
     }
 
     /**
-     * Ekran o'chganda ham ishlashda davom etish uchun qulflar.
+     * The locks that keep it working with the screen off.
      *
-     * Telefon ekrani o'chishi bilan tizim protsessorni to'xtatadi va
-     * Wi-Fi ni uxlatadi - ulanish uziladi. Bu qulflar shuni to'xtatadi.
-     * Ular batareyani ko'proq yeydi, lekin ekran uzatish allaqachon
-     * batareya yeydigan ish va u faqat foydalanuvchi yoqqanda ishlaydi.
+     * The moment the phone screen turns off, the system stops the CPU
+     * and puts Wi-Fi to sleep, and the connection drops. These locks
+     * prevent that. They cost more battery, but screen sharing is
+     * already a battery-hungry job and it only runs when the user turns
+     * it on.
      *
-     * Diqqat: bu ekranni yoqib turmaydi - Android bunga ruxsat
-     * bermaydi. Ekran o'chgan payt kompyuterga qora tasvir borishi
-     * mumkin, lekin ULANISH uzilmaydi va ekran yonishi bilan tasvir
-     * qaytadi.
+     * Note: this does not keep the screen lit - Android does not allow
+     * that. While the screen is off the computer may receive a black
+     * picture, but the CONNECTION survives and the picture comes back
+     * as soon as the screen lights up.
      */
     private void holdLocks() {
         try {
@@ -653,12 +658,12 @@ public class ScreenService extends Service {
                 android.os.PowerManager pm =
                         (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
                 wakeLock = pm.newWakeLock(
-                        android.os.PowerManager.PARTIAL_WAKE_LOCK, "pult:ekran");
+                        android.os.PowerManager.PARTIAL_WAKE_LOCK, "pult:screen");
                 wakeLock.setReferenceCounted(false);
             }
             if (!wakeLock.isHeld()) wakeLock.acquire();
         } catch (Exception e) {
-            Log.w(TAG, "protsessor qulfi olinmadi: " + e);
+            Log.w(TAG, "CPU lock not acquired: " + e);
         }
         try {
             if (wifiLock == null) {
@@ -670,7 +675,7 @@ public class ScreenService extends Service {
             }
             if (!wifiLock.isHeld()) wifiLock.acquire();
         } catch (Exception e) {
-            Log.w(TAG, "Wi-Fi qulfi olinmadi: " + e);
+            Log.w(TAG, "Wi-Fi lock not acquired: " + e);
         }
     }
 

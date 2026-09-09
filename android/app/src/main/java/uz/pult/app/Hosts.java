@@ -11,30 +11,30 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Ulanadigan kompyuterlar ro'yxati.
+ * The list of computers to connect to.
  *
- * Har bir yozuvda kompyuterning bir nechta manzili saqlanadi, bitta
- * emas. Sababi tezlik: bitta Wi-Fi ichida mahalliy manzil tunneldan
- * bir necha barobar tez, boshqa tarmoqdan esa faqat tunnel ishlaydi.
- * Qaysi biri hozir ishlashini oldindan bilib bo'lmaydi, shuning uchun
- * ilova ulanish oldidan hammasini tekshirib ko'radi ({@link Reach}).
+ * Each entry stores several addresses for a computer, not one. The
+ * reason is speed: on the same Wi-Fi a local address is several times
+ * faster than the tunnel, while from another network only the tunnel
+ * works. Which one works right now cannot be known in advance, so the
+ * app tries them all before connecting ({@link Reach}).
  *
- * Sertifikat izi ham shu yerda: agent mahalliy tarmoqda o'z-o'zini
- * imzolagan sertifikat ishlatadi va brauzer har safar ogohlantiradi.
- * Ilova uni bir marta so'rab eslab qoladi - keyin ulanish jim va,
- * aslida, brauzerdagidan xavfsizroq bo'ladi: faqat aynan o'sha
- * sertifikat qabul qilinadi.
+ * The certificate fingerprint lives here too: on a local network the
+ * agent uses a self-signed certificate and the browser warns every
+ * time. The app asks once and remembers - after that the connection is
+ * quiet and, in fact, safer than in a browser: only that exact
+ * certificate is accepted.
  */
 public class Hosts {
 
     public static class Host {
-        /** Agentning o'z raqami. Manzil o'zgarsa ham shu o'zgarmaydi. */
+        /** The agent's own id. It survives an address change. */
         public String id = "";
         public String name = "";
-        public String url = "";        // oxirgi ishlagan manzil
+        public String url = "";        // the last address that worked
         public String token = "";
-        public String pin = "";        // sertifikat SHA-256 izi (hex)
-        /** Ma'lum barcha manzillar: mahalliy IP'lar va tunnel manzili. */
+        public String pin = "";        // the certificate SHA-256 fingerprint (hex)
+        /** Every known address: the local IPs and the tunnel address. */
         public List<String> urls = new ArrayList<>();
 
         public String display() {
@@ -47,23 +47,23 @@ public class Hosts {
             }
         }
 
-        /** Brauzerga beriladigan to'liq manzil (oxirgi ishlagani). */
+        /** The full address handed to the browser (the last working one). */
         public String fullUrl() {
             return fullUrl(url);
         }
 
-        /** Berilgan manzil asosida to'liq havola. */
+        /** The full link built on a given address. */
         public String fullUrl(String base) {
             while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
             return base + "/#k=" + Uri.encode(token);
         }
 
         /**
-         * Tekshiriladigan manzillar, tez-sekin tartibida.
+         * The addresses to try, fastest first.
          *
-         * Mahalliy manzillar oldinda turadi: ular ishlasa tunnelni
-         * umuman ishlatmaslik kerak - tunnel trafikni Cloudflare
-         * orqali aylantiradi va bu sezilarli sekinlashtiradi.
+         * Local addresses come first: if they work, the tunnel should
+         * not be used at all - it detours the traffic through
+         * Cloudflare and that slows things down noticeably.
          */
         public List<String> candidates() {
             List<String> all = new ArrayList<>();
@@ -81,7 +81,7 @@ public class Hosts {
             return lan;
         }
 
-        /** Yangi manzilni ro'yxatga qo'shadi (takrorlanmasin). */
+        /** Adds a new address to the list, avoiding duplicates. */
         public void learn(String u) {
             if (u == null || u.isEmpty()) return;
             while (u.endsWith("/")) u = u.substring(0, u.length() - 1);
@@ -90,10 +90,10 @@ public class Hosts {
     }
 
     /**
-     * Manzil mahalliy tarmoqniki (ya'ni tez) ekanini aniqlaydi.
+     * Tells whether an address is on the local network (and so fast).
      *
-     * Faqat xususiy IPv4 oraliqlari hisobga olinadi. Domen nomi
-     * bo'lsa - bu tunnel yoki tashqi manzil.
+     * Only private IPv4 ranges count. A domain name means a tunnel or
+     * some other external address.
      */
     public static boolean isLocal(String url) {
         try {
@@ -144,7 +144,7 @@ public class Hosts {
                 }
             }
         } catch (Exception ignored) {
-            // Buzilgan ro'yxat ilovani ishga tushirmay qo'ymasligi kerak
+            // A corrupt list must not stop the app from starting
         }
         return out;
     }
@@ -169,7 +169,7 @@ public class Hosts {
         prefs.edit().putString(KEY, arr.toString()).apply();
     }
 
-    /** Manzil bo'yicha topib, sertifikat izini yangilaydi. */
+    /** Finds the entry by address and updates its fingerprint. */
     public void rememberPin(String url, String pin) {
         List<Host> list = all();
         for (Host h : list) {
@@ -182,12 +182,12 @@ public class Hosts {
     }
 
     /**
-     * Ulanish muvaffaqiyatli bo'lgach chaqiriladi: qaysi manzil
-     * ishlagani va agent aytgan boshqa manzillar saqlanadi.
+     * Called after a successful connection: it stores which address
+     * worked and the other addresses the agent advertised.
      *
-     * Tunnel manzili har ishga tushganda yangi bo'ladi, shuning uchun
-     * ro'yxatni har ulanishda yangilab turish shart - aks holda
-     * telefon eskirgan manzilni cheksiz sinab yurardi.
+     * The tunnel address is new on every start, so the list has to be
+     * refreshed on every connection - otherwise the phone would keep
+     * trying a stale address forever.
      */
     public void remember(String hostId, String working, List<String> advertised) {
         List<Host> list = all();
@@ -196,8 +196,9 @@ public class Hosts {
             if (!hostId.isEmpty()) h.id = hostId;
             h.url = strip(working);
             if (advertised != null && !advertised.isEmpty()) {
-                // Agent aytgan ro'yxat haqiqatning manbai: eskirgan
-                // manzillar o'chadi, ishlagani esa oldinda qoladi.
+                // The agent's list is the source of truth: stale
+                // addresses are dropped and the working one stays
+                // first.
                 List<String> fresh = new ArrayList<>();
                 fresh.add(h.url);
                 for (String u : advertised) {
@@ -235,10 +236,10 @@ public class Hosts {
         List<Host> list = all();
         for (int i = 0; i < list.size(); i++) {
             Host old = list.get(i);
-            // Bitta kompyuter ikki marta qo'shilmasin. Manzil o'zgargan
-            // bo'lishi mumkin (tunnel har safar yangi manzil beradi),
-            // shuning uchun avval kalit bo'yicha solishtiramiz - u
-            // kompyuterning o'zgarmas belgisi.
+            // One computer must not be added twice. Its address may
+            // have changed (the tunnel gives a new one every time), so
+            // we compare by key first - that is the computer's stable
+            // mark.
             boolean same = (!h.id.isEmpty() && h.id.equals(old.id))
                     || (!h.token.isEmpty() && h.token.equals(old.token))
                     || sameServer(old.url, h.url);
@@ -247,8 +248,8 @@ public class Hosts {
             if (h.pin.isEmpty()) h.pin = old.pin;
             if (h.id.isEmpty()) h.id = old.id;
             if (h.name.isEmpty()) h.name = old.name;
-            // Eski manzillar saqlanadi: yangi havola tunnelniki bo'lsa
-            // ham mahalliy manzil keyin yana kerak bo'ladi.
+            // The old addresses are kept: even when the new link is the
+            // tunnel's, the local address will be needed again.
             for (String u : old.urls) h.learn(u);
             h.learn(h.url);
             list.set(i, h);
@@ -271,7 +272,7 @@ public class Hosts {
         save(list);
     }
 
-    /** Ikkita manzil bitta serverni bildiradimi (sxema, host, port). */
+    /** Whether two addresses mean the same server (scheme, host, port). */
     public static boolean sameServer(String a, String b) {
         try {
             Uri x = Uri.parse(a), y = Uri.parse(b);
@@ -294,18 +295,18 @@ public class Hosts {
     }
 
     /**
-     * Havoladan kompyuter yozuvini yasaydi.
+     * Builds a computer entry out of a link.
      *
-     * Kutilgan ko'rinish: https://192.168.1.5:8787/#k=KALIT
-     * Kalit ataylab fragmentda ("#" dan keyin): u serverga yuborilmaydi
-     * va veb-server loglarida qolib ketmaydi.
+     * The expected shape is https://192.168.1.5:8787/#k=KEY
+     * The key is deliberately in the fragment (after the "#"): it is
+     * never sent to the server and cannot end up in web server logs.
      */
     public static Host parse(String link) {
         if (link == null) return null;
         link = link.trim();
         if (link.isEmpty()) return null;
 
-        // Ilova havolasi: pult://ochish?u=<kodlangan manzil>
+        // The app link: pult://add?u=<encoded address>
         if (link.startsWith("pult://")) {
             try {
                 Uri u = Uri.parse(link);
@@ -327,12 +328,12 @@ public class Hosts {
             link = link.substring(0, hash);
             for (String part : frag.split("&")) {
                 if (part.startsWith("k=")) token = Uri.decode(part.substring(2));
-                // Kompyuter raqami: manzil o'zgarganda ham qaysi yozuvni
-                // yangilash kerakligini shu aytadi
+                // The computer's id: this is what says which entry to
+                // update when the address changes
                 else if (part.startsWith("h=")) id = Uri.decode(part.substring(2));
             }
         }
-        // Kalit so'rov qismida bo'lsa ham qabul qilamiz
+        // A key in the query string is accepted too
         try {
             Uri u = Uri.parse(link);
             if (token.isEmpty()) {

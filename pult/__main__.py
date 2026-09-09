@@ -1,8 +1,8 @@
 """
-Pult agentini ishga tushirish.
+Starting the Pult agent.
 
-Odatiy holat - treyda, konsolsiz. Nosozlikni izlash uchun --console
-bilan terminaldan ishga tushirish mumkin.
+The normal case is the tray, with no console. For troubleshooting it can
+be started from a terminal with --console.
 """
 from __future__ import annotations
 
@@ -42,11 +42,10 @@ async def run_headless(cfg: cfgmod.Config, verbose: bool) -> int:
         if verbose:
             print("\n".join(appmod.connection_info(cfg)))
         else:
-            logging.info("ishga tushdi: %s", appmod.phone_url(cfg))
+            logging.info("started: %s", appmod.phone_url(cfg))
 
-    # serve() ishlatiladi, chunki tunnel va xabarnoma o'sha yerda
-    # ulangan. Bu yerda alohida yozilsa ikkita rejim asta-sekin
-    # bir-biridan farq qilib ketardi.
+    # serve() is used because the tunnel and the notifier are wired up
+    # there. Repeating that here would let the two modes drift apart.
     try:
         await appmod.serve(cfg, stop, on_ready=ready)
     except appmod.FfmpegMissing as exc:
@@ -57,29 +56,29 @@ async def run_headless(cfg: cfgmod.Config, verbose: bool) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        prog="pult", description="Telefondan kompyuterni boshqarish"
+        prog="pult", description="Control your computer from your phone"
     )
-    parser.add_argument("--port", type=int, help="tinglash porti (standart 8787)")
-    parser.add_argument("--bind", help="tinglash manzili (standart 0.0.0.0)")
+    parser.add_argument("--port", type=int, help="port to listen on (default 8787)")
+    parser.add_argument("--bind", help="address to listen on (default 0.0.0.0)")
     parser.add_argument("--console", action="store_true",
-                        help="treysiz, loglar terminalga chiqadi")
+                        help="no tray, logs go to the terminal")
     parser.add_argument("--no-tls", action="store_true",
-                        help="HTTPS o'rniga oddiy HTTP (faqat tunnel orqasida)")
+                        help="plain HTTP instead of HTTPS (only behind a tunnel)")
     parser.add_argument("--show", action="store_true",
-                        help="ulanish manzilini ko'rsatib chiqish")
+                        help="print the connection details and exit")
     parser.add_argument("--install", action="store_true",
-                        help="doimiy joyga o'rnatib, avtomatik ishga tushirishni qo'shish")
+                        help="install to a permanent location and start at logon")
     parser.add_argument("--uninstall", action="store_true",
-                        help="avtomatik ishga tushirishni o'chirish")
+                        help="remove the logon task")
     parser.add_argument("--remote", choices=["off", "cloudflare"],
-                        help="tashqi kirish: bitta Wi-Fi chegarasidan chiqish")
-    parser.add_argument("--update", metavar="MANBA",
-                        help="o'z-o'zini yangilash manbasi: papka, http(s) "
-                             "havola yoki \"off\"")
+                        help="remote access: reach the computer from any network")
+    parser.add_argument("--update", metavar="SOURCE",
+                        help="self-update source: a folder, an http(s) link "
+                             "or \"off\"")
     parser.add_argument("--telegram", metavar="TOKEN",
-                        help="Telegram xabarnomasini sozlash (@BotFather bergan token)")
+                        help="set up Telegram notifications (token from @BotFather)")
     parser.add_argument("--test-notify", action="store_true",
-                        help="Telegram xabarini hozir yuborib ko'rish")
+                        help="send a Telegram message right now")
     args = parser.parse_args()
 
     appmod.setup_logging(console=args.console or args.show or bool(args.telegram))
@@ -94,8 +93,8 @@ def main() -> int:
             ok, text = setupmod.install()
             if ok:
                 setupmod.launch(setupmod.install_dir() / setupmod.EXE_NAME)
-        # Konsoldan ishga tushirilgan bo'lsa matn ko'rinadi, .exe dan
-        # bosilgan bo'lsa - oyna. Ikkalasi ham kerak.
+        # Started from a console the text is visible; double-clicked as
+        # an .exe it is not, so a dialog is needed too.
         print(text)
         if getattr(sys, "frozen", False):
             setupmod.message(text)
@@ -104,39 +103,39 @@ def main() -> int:
     if args.update:
         fresh = cfgmod.load()
         value = args.update.strip()
-        if value.lower() in ("off", "yo'q", "none"):
+        if value.lower() in ("off", "none"):
             fresh.update.mode = "off"
             fresh.update.source = ""
-            print("O'z-o'zini yangilash o'chirildi.")
+            print("Self-update turned off.")
         else:
             fresh.update.mode = "url" if value.lower().startswith("http") else "folder"
             fresh.update.source = value
-            print(f"Yangilash manbasi: {value}  (rejim: {fresh.update.mode})")
+            print(f"Update source: {value}  (mode: {fresh.update.mode})")
             print()
-            print("  Dastur har ishga tushganda shu manbani tekshiradi va")
-            print("  fayl boshqacha bo'lsa o'zini almashtirib qayta ishga")
-            print(f"  tushadi. Ishlab turganda ham har "
-                  f"{fresh.update.check_minutes} daqiqada tekshiradi,")
-            print("  lekin faqat hech kim ulanmagan paytda yangilaydi.")
+            print("  On every start the program checks this source and, if")
+            print("  the file differs, replaces itself and restarts. While")
+            print(f"  running it also checks every "
+                  f"{fresh.update.check_minutes} minutes, but only")
+            print("  applies an update when nobody is connected.")
         cfgmod.save(fresh)
         return 0
 
     if args.remote:
-        # Faylga yozamiz, shuning uchun buyruq qatoridagi boshqa
-        # vaqtinchalik o'zgarishlar (--port va h.k.) tushib qolmasin
+        # Written to the file, so temporary command-line changes
+        # (--port and friends) do not get saved along with it
         fresh = cfgmod.load()
         fresh.remote.mode = args.remote
         cfgmod.save(fresh)
         if args.remote == "off":
-            print("Tashqi kirish o'chirildi - faqat mahalliy tarmoq.")
+            print("Remote access turned off - local network only.")
         else:
-            print("Tashqi kirish yoqildi: cloudflare.")
+            print("Remote access enabled: cloudflare.")
             print()
-            print("  Pult qayta ishga tushganda cloudflared yuklab olinadi")
-            print("  (bir marta, ~35 MB) va tashqi manzil ochiladi.")
-            print("  Manzil har safar yangi bo'ladi va Telegram xabari")
-            print("  bilan keladi - shuning uchun xabarnoma sozlangani")
-            print("  ma'qul:  python -m pult --telegram <TOKEN>")
+            print("  On the next start Pult downloads cloudflared once")
+            print("  (~50 MB) and opens a public address.")
+            print("  That address is new every time and arrives by Telegram,")
+            print("  so setting notifications up is worth it:")
+            print("      python -m pult --telegram <TOKEN>")
         return 0
 
     if args.telegram:
@@ -148,14 +147,14 @@ def main() -> int:
         from . import notify
 
         if not cfg.telegram.chat_id:
-            print("Telegram sozlanmagan. Avval:  python -m pult --telegram <TOKEN>")
+            print("Telegram is not set up. First:  python -m pult --telegram <TOKEN>")
             return 1
 
         async def _test() -> int:
             tg = notify.Telegram(cfg.telegram.bot_token, cfg.telegram.chat_id)
             url = appmod.phone_url(cfg)
-            await tg.send(notify.online_message(cfg, url), button=("Boshqarish", url))
-            print("Xabar yuborildi.")
+            await tg.send(notify.online_message(cfg, url), button=("Open Pult", url))
+            print("Message sent.")
             return 0
 
         return asyncio.run(_test())
@@ -170,9 +169,9 @@ def main() -> int:
         except KeyboardInterrupt:
             return 0
 
-    # Yig'ilgan .exe birinchi marta ochilganda o'zini o'rnatishni
-    # taklif qiladi. Shu tufayli yangi kompyuterga bitta fayldan
-    # boshqa hech narsa kerak emas.
+    # Opened for the first time, the built .exe offers to install
+    # itself. That is why a new computer needs nothing but this one
+    # file.
     if getattr(sys, "frozen", False):
         from . import setup as setupmod
         from . import single
@@ -181,33 +180,33 @@ def main() -> int:
         if setupmod.first_run():
             return 0
 
-        # Bitta nusxa bas. Kutish vaqti bor, chunki yangilanishdan
-        # keyin eski nusxa chiqib ulgurmagan bo'lishi mumkin.
+        # One copy is enough. There is a wait because right after an
+        # update the old copy may not have exited yet.
         if not single.acquire(timeout=20):
-            # Ikkinchi nusxani jimgina yopish yaramaydi: odam ish
-            # stolidagi belgini bosganda hech narsa bo'lmagandek
-            # tuyuladi. Dastur allaqachon ishlayotgan bo'lsa,
-            # bosishning ma'nosi bitta - oynani ochish.
-            logging.info("boshqa nusxa ishlayapti - oynani ochamiz")
+            # Closing the second copy silently is no good: clicking the
+            # desktop icon would look like nothing happened. If the
+            # program is already running, a click means one thing -
+            # open the window.
+            logging.info("another copy is running - opening the window")
             from . import window
 
             window.open_url(appmod.viewer_url(cfg), size=(980, 720))
             return 0
 
-        # Yangi versiya bo'lsa o'zini almashtirib qayta ishga tushadi.
-        # Server ko'tarilishidan oldin: portni band qilib olib, keyin
-        # qayta ishga tushsak yangi nusxa portni ololmay qolardi.
+        # A newer version replaces this one and restarts. This happens
+        # before the server binds: taking the port first would leave the
+        # new copy unable to get it.
         if asyncio.run(updatemod.apply_if_any(cfg)):
             return 0
-        logging.info("versiya: %s; %s",
+        logging.info("version: %s; %s",
                      updatemod.stamp(), updatemod.describe(cfg))
 
-    # Odatiy yo'l: trey. pystray bo'lmasa konsolsiz fon rejimida davom
-    # etamiz - dastur baribir ishlashi kerak.
+    # The normal path: the tray. Without pystray we carry on headless -
+    # the program still has to work.
     try:
         from . import tray
     except ImportError:
-        logging.warning("pystray topilmadi, trey ikonkasisiz ishlaymiz")
+        logging.warning("pystray not found, running without a tray icon")
         return asyncio.run(run_headless(cfg, verbose=False))
 
     return tray.run(cfg)

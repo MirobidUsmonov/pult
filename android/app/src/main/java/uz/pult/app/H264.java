@@ -1,12 +1,12 @@
 package uz.pult.app;
 
 /**
- * H.264 oqimidan brauzer uchun kodek satrini oladi.
+ * Reads the browser's codec string out of an H.264 stream.
  *
- * Kompyuter tarafida ham xuddi shu hisob bor: satrni qo'lda yozib
- * qo'yish mumkin emas, chunki profil va daraja kodlagichga hamda ekran
- * o'lchamiga qarab o'zgaradi, noto'g'ri satr esa brauzerda dekoderni
- * umuman ishga tushirmaydi. SPS ning o'zidan olingani doim to'g'ri.
+ * The computer side does the very same calculation: the string cannot
+ * be hard-coded, because the profile and level change with the encoder
+ * and the screen size, and a wrong string will not start the browser's
+ * decoder at all. Taken from the SPS itself, it is always right.
  */
 public final class H264 {
 
@@ -32,7 +32,7 @@ public final class H264 {
         return "avc1.42E01E";
     }
 
-    /** Keyingi NAL boshlanish joyini qaytaradi (boshlanish kodidan keyin). */
+    /** Returns where the next NAL begins (just after the start code). */
     private static int findStartCode(byte[] b, int from) {
         for (int i = from; i + 2 < b.length; i++) {
             if (b[i] == 0 && b[i + 1] == 0) {

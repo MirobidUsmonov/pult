@@ -1,10 +1,10 @@
 """
-Ekranni olish va H.264 ga kodlash.
+Screen capture and H.264 encoding.
 
-ffmpeg alohida jarayon sifatida ishlaydi va chiqishini quvurga (pipe)
-yozadi. Biz uni Annex-B oqimidan "kirish birliklari"ga (access unit =
-bitta kadr) ajratamiz va shu holicha brauzerga uzatamiz - brauzerdagi
-WebCodecs dekoderi aynan shu ko'rinishni kutadi.
+ffmpeg runs as a separate process and writes its output to a pipe. We
+split that Annex-B stream into access units (one access unit = one
+frame) and pass them on to the browser as they are - the browser's
+WebCodecs decoder expects exactly that shape.
 """
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ from .platform import ffmpeg as ff
 
 log = logging.getLogger("pult.capture")
 
-# AUD (Access Unit Delimiter) NAL - har bir kadr shu bilan boshlanadi.
-# 4 baytli boshlanish kodi (00 00 00 01 09) ham shu naqshni o'z ichiga
-# oladi, shuning uchun bittasini qidirish yetarli.
+# The AUD (Access Unit Delimiter) NAL - every frame starts with one.
+# The four-byte start code (00 00 00 01 09) contains this pattern too,
+# so searching for the one pattern is enough.
 _AUD = b"\x00\x00\x01\x09"
 _START = b"\x00\x00\x01"
 
@@ -30,19 +30,19 @@ _START = b"\x00\x00\x01"
 @dataclass
 class CaptureConfig:
     monitor: int = 0
-    # Ekran olish manbasining raqami. -1 bo'lsa monitor bilan bir xil.
-    # Alohida kerak, chunki videokarta chiqishlari tartibi tizimdagi
-    # ekranlar tartibiga har doim ham mos kelmaydi.
+    # The index of the capture source. -1 means the same as monitor.
+    # It is separate because the order of the graphics card's outputs
+    # does not always match the order of the system's screens.
     source: int = -1
     fps: int = 30
-    scale_width: int = 0        # 0 = ekranning o'z kengligi
+    scale_width: int = 0        # 0 = the screen's own width
     bitrate_kbps: int = 4000
     draw_cursor: bool = True
     gop_seconds: float = 2.0
-    encoder: str | None = None  # None = avtomatik tanlash
+    encoder: str | None = None  # None = pick automatically
 
     def key(self) -> tuple:
-        """Qayta ishga tushirish kerakmi yo'qmi - shuni solishtirish uchun."""
+        """Compared to decide whether a restart is needed."""
         return (
             self.monitor, self.source, self.fps, self.scale_width,
             self.bitrate_kbps, self.draw_cursor, self.gop_seconds, self.encoder,
@@ -50,11 +50,11 @@ class CaptureConfig:
 
 
 def codec_string(au: bytes) -> str | None:
-    """SPS'dan brauzer uchun kodek satrini yasaydi, masalan "avc1.4D4028".
+    """Builds the browser's codec string from the SPS, e.g. "avc1.4D4028".
 
-    Buni qo'lda yozib qo'ymaymiz: profil va daraja kodlagich va ekran
-    o'lchamiga qarab o'zgaradi, noto'g'ri satr esa dekoderni ishga
-    tushirmaydi. SPS'ning o'zidan olganimiz doim to'g'ri bo'ladi.
+    It is not hard-coded: the profile and level change with the encoder
+    and the screen size, and a wrong string simply will not start the
+    decoder. Taken from the SPS itself, it is always right.
     """
     i = 0
     n = len(au)
@@ -69,7 +69,7 @@ def codec_string(au: bytes) -> str | None:
 
 
 def is_keyframe(au: bytes) -> bool:
-    """Kadr IDR (kalit kadr) ekanini aniqlaydi."""
+    """Tells whether the frame is an IDR (a key frame)."""
     i = 0
     n = len(au)
     while True:
@@ -78,15 +78,15 @@ def is_keyframe(au: bytes) -> bool:
             return False
         k = j + 3
         t = au[k] & 0x1F
-        if t == 5:      # IDR bo'lagi
+        if t == 5:      # an IDR slice
             return True
-        if t == 1:      # oddiy bo'lak - demak kalit kadr emas
+        if t == 1:      # a plain slice - so not a key frame
             return False
         i = k
 
 
 class H264Splitter:
-    """Bayt oqimini to'liq kadrlarga ajratadi."""
+    """Splits a byte stream into whole frames."""
 
     def __init__(self) -> None:
         self._buf = bytearray()
@@ -95,11 +95,11 @@ class H264Splitter:
         self._buf.extend(chunk)
         buf = self._buf
 
-        # Buferdagi barcha kadr chegaralarini topamiz
+        # Find every frame boundary in the buffer
         offsets: list[int] = []
         i = buf.find(_AUD)
         while i >= 0:
-            # 4 baytli boshlanish kodi bo'lsa bir bayt orqaga suramiz
+            # Step back one byte for a four-byte start code
             start = i - 1 if i > 0 and buf[i - 1] == 0 else i
             offsets.append(start)
             i = buf.find(_AUD, i + 4)
@@ -142,12 +142,12 @@ class CaptureStats:
 
 
 class ScreenCapture:
-    """ffmpeg jarayonini boshqaradi va kadrlarni qayta chaqiruvga uzatadi.
+    """Drives the ffmpeg process and hands frames to a callback.
 
-    Muhim xususiyat: hech kim tomosha qilmayotganda umuman ishlamaydi.
-    Birinchi tomoshabin ulanganda ishga tushadi (va darrov kalit kadr
-    beradi), oxirgisi uzilganda to'xtaydi - shunda kompyuter bo'sh
-    turganda protsessor ham, videokarta ham tegilmaydi.
+    The important part: with nobody watching it does not run at all. It
+    starts when the first viewer connects (and gives a key frame right
+    away) and stops when the last one leaves, so an idle computer costs
+    neither CPU nor GPU.
     """
 
     def __init__(
@@ -169,31 +169,31 @@ class ScreenCapture:
         self._proc: asyncio.subprocess.Process | None = None
         self._tasks: list[asyncio.Task] = []
         self._splitter = H264Splitter()
-        self._gop: list[bytes] = []      # oxirgi kalit kadrdan beri kelgan kadrlar
+        self._gop: list[bytes] = []      # frames since the last key frame
         self._lock = asyncio.Lock()
         self._stderr_tail: list[str] = []
         self._last_spawn = 0.0
-        # ddagrab birinchi kadrni ekran O'ZGARGANDA beradi. Ish stoli
-        # qimirlamay tursa (to'liq ekranli o'yin ochiq bo'lsa) u
-        # cheksiz kutishi mumkin. Shunda gdigrab'ga o'tamiz: u sekinroq
-        # va protsessorni ko'proq yeydi, lekin taymer bo'yicha ishlaydi
-        # va doim kadr beradi.
+        # ddagrab only gives its first frame when the screen CHANGES.
+        # With a still desktop (a full-screen game in front, say) it can
+        # wait forever. Then we fall back to gdigrab: slower and heavier
+        # on the CPU, but it runs off a timer and always produces
+        # frames.
         self._no_dda = False
-        # Kodek satri aniqlanganda chaqiriladi. Kutish o'rniga xabar
-        # berish ishonchliroq: ekran olish qancha kech boshlansa ham
-        # tomoshabin oxir-oqibat to'g'ri xabarni oladi.
+        # Called once the codec string is known. Pushing is safer than
+        # waiting: however late capture starts, the viewer eventually
+        # gets the right message.
         self.on_codec = None
 
-        # Kodek satri faqat birinchi kalit kadr kelganda ma'lum bo'ladi
-        # (u SPS ichidan o'qiladi). Tomoshabinga undan oldin xabar
-        # yuborsak, brauzer dekoderni sozlay olmaydi - shuning uchun
-        # kutish uchun alohida bayroq.
+        # The codec string is only known once the first key frame
+        # arrives (it is read out of the SPS). Told any earlier, the
+        # browser cannot configure its decoder - hence a separate flag
+        # to wait on.
         self.codec_ready = asyncio.Event()
 
-    # -- ffmpeg buyrug'i ---------------------------------------------------
+    # -- the ffmpeg command ------------------------------------------------
 
     def _source_args(self, cfg: CaptureConfig) -> tuple[list[str], list[str]]:
-        """(kirish argumentlari, filtr zanjirining boshi) qaytaradi."""
+        """Returns (input arguments, the head of the filter chain)."""
         system = platform.system()
         source = cfg.source if cfg.source >= 0 else cfg.monitor
         mon = None
@@ -205,7 +205,7 @@ class ScreenCapture:
             mon = self.monitors[0]
 
         if system == "Windows" and "ddagrab" in self.caps.filters and not self._no_dda:
-            # Desktop Duplication API - ekran GPU xotirasida olinadi
+            # Desktop Duplication API - captured in GPU memory
             src = (
                 f"ddagrab=output_idx={source}"
                 f":framerate={cfg.fps}"
@@ -238,7 +238,7 @@ class ScreenCapture:
                     "-i", f"{cfg.monitor}:none"]
             return args, []
 
-        raise RuntimeError(f"bu tizim uchun ekran olish yo'li yo'q: {system}")
+        raise RuntimeError(f"no capture path for this system: {system}")
 
     def build_command(self, cfg: CaptureConfig) -> list[str]:
         enc = ff.pick_encoder(self.caps, cfg.encoder)
@@ -251,12 +251,12 @@ class ScreenCapture:
         src_h = mon["h"] if mon else 1080
 
         if cfg.scale_width and cfg.scale_width < src_w:
-            # Juft songa yaxlitlaymiz: H.264 toq o'lchamni qabul qilmaydi
+            # Round to an even number: H.264 refuses odd dimensions
             w = cfg.scale_width - (cfg.scale_width % 2)
             h = int(round(src_h * w / src_w))
             h -= h % 2
-            # fast_bilinear - sifat farqi ko'zga tashlanmaydi, protsessor esa
-            # sezilarli darajada kam ishlaydi
+            # fast_bilinear - the quality difference is invisible, and
+            # the CPU does noticeably less work
             chain.append(f"scale={w}:{h}:flags=fast_bilinear")
             self.width, self.height = w, h
         else:
@@ -276,7 +276,7 @@ class ScreenCapture:
         cmd += ["-f", "h264", "-flush_packets", "1", "pipe:1"]
         return cmd
 
-    # -- hayot sikli -------------------------------------------------------
+    # -- lifecycle ---------------------------------------------------------
 
     @property
     def running(self) -> bool:
@@ -291,7 +291,7 @@ class ScreenCapture:
             await self._spawn()
 
     async def apply(self, cfg: CaptureConfig) -> None:
-        """Sozlamalarni o'zgartiradi; kerak bo'lsa qayta ishga tushiradi."""
+        """Changes the settings, restarting if that is needed."""
         async with self._lock:
             same = cfg.key() == self.cfg.key()
             self.cfg = cfg
@@ -305,10 +305,10 @@ class ScreenCapture:
             await self._kill()
 
     async def _spawn(self) -> None:
-        # Ketma-ket tez qayta ishga tushirmaymiz. Ekran almashtirilganda
-        # bu bir necha marta ketma-ket chaqirilishi mumkin, kodlagich va
-        # ekran ushlagichi esa oldingi nusxadan bo'shashga ulgurmaydi -
-        # natijada ffmpeg tirik qoladi-yu, hech narsa chiqarmaydi.
+        # Do not restart in quick succession. Switching screens can
+        # call this several times in a row, and neither the encoder nor
+        # the screen grabber has let go of the previous instance yet -
+        # ffmpeg then stays alive but produces nothing.
         gap = time.monotonic() - self._last_spawn
         if gap < 0.6:
             await asyncio.sleep(0.6 - gap)
@@ -316,7 +316,7 @@ class ScreenCapture:
         self._codec_retried = False
 
         cmd = self.build_command(self.cfg)
-        log.info("ekran olish boshlandi: %s", " ".join(cmd))
+        log.info("capture started: %s", " ".join(cmd))
 
         flags = 0
         if hasattr(subprocess, "CREATE_NO_WINDOW"):
@@ -342,20 +342,20 @@ class ScreenCapture:
         ]
 
     async def _watchdog(self) -> None:
-        """Kadr kelmasa boshqa ekran olish usuliga o'tadi.
+        """Switches capture method when no frames arrive.
 
-        Vazifa _kill() da bekor qilinadi, shuning uchun tomoshabin
-        ketgandan keyin ekran olishni qayta yoqib yuborish xavfi yo'q.
+        The task is cancelled in _kill(), so there is no risk of it
+        starting capture again after the viewer has left.
         """
-        # Sog'lom holatda birinchi kadr bir soniyagacha keladi. Uzoq
-        # kutishning ma'nosi yo'q: kutish faqat foydalanuvchini qora
-        # ekran oldida ushlab turadi, gdigrab esa baribir ishlaydi -
-        # u shunchaki protsessorni ko'proq yeydi.
+        # In a healthy state the first frame arrives within a second.
+        # Waiting longer buys nothing: it only keeps the user in front
+        # of a black screen, and gdigrab works regardless - it simply
+        # costs more CPU.
         await asyncio.sleep(2.5)
         if self.stats.bytes_out or self._no_dda or self._proc is None:
             return
-        log.warning("ddagrab 2.5 soniyada kadr bermadi - gdigrab'ga o'tamiz "
-                    "(ish stoli qimirlamayotgan bo'lishi mumkin)")
+        log.warning("ddagrab gave no frame in 2.5s - falling back to gdigrab "
+                    "(the desktop may simply be still)")
         self._no_dda = True
         async with self._lock:
             if self._proc is not None:
@@ -363,9 +363,9 @@ class ScreenCapture:
                 await self._spawn()
 
     async def _kill(self) -> None:
-        # Joriy vazifani bekor qilmaymiz: qorovul ham shu ro'yxatda va
-        # u _kill() ni o'zi chaqiradi - o'zini bekor qilsa keyingi
-        # qatorga yetmasdan uzilib qolardi.
+        # Do not cancel the current task: the watchdog is on this list
+        # and calls _kill() itself - cancelling itself would cut it off
+        # before the next line.
         current = asyncio.current_task()
         for t in self._tasks:
             if t is not current:
@@ -382,7 +382,7 @@ class ScreenCapture:
                     proc.kill()
                 except ProcessLookupError:
                     pass
-        log.info("ekran olish to'xtadi")
+        log.info("capture stopped")
 
     async def _read_stdout(self) -> None:
         assert self._proc and self._proc.stdout
@@ -400,17 +400,16 @@ class ScreenCapture:
                             self.codec = codec_string(au)
                             if self.codec:
                                 self.codec_ready.set()
-                                # Kutgan tomoshabinlar bo'lsa xabar
-                                # beramiz. Kodek kech kelishi mumkin
-                                # (pastda, wait_codec izohida), shunda
-                                # ular allaqachon bo'sh kodek bilan
-                                # xabar olgan bo'ladi.
+                                # Tell any waiting viewers. The codec
+                                # can arrive late (see wait_codec
+                                # below), in which case they already
+                                # got a message with an empty codec.
                                 if self.on_codec:
                                     res = self.on_codec()
                                     if asyncio.iscoroutine(res):
                                         await res
                     else:
-                        # Bufer cheksiz o'smasligi uchun chegara qo'yamiz
+                        # A cap so the buffer cannot grow without bound
                         if len(self._gop) < self.cfg.fps * 4:
                             self._gop.append(au)
                     self.stats.note(len(au), key)
@@ -420,10 +419,10 @@ class ScreenCapture:
         except asyncio.CancelledError:
             raise
         except Exception:
-            log.exception("kadr o'qishda xato")
+            log.exception("error while reading frames")
         finally:
             if self._proc and self._proc.returncode not in (None, 0):
-                log.error("ffmpeg tugadi (kod %s): %s",
+                log.error("ffmpeg exited (code %s): %s",
                           self._proc.returncode, " | ".join(self._stderr_tail[-5:]))
 
     async def _read_stderr(self) -> None:
@@ -445,16 +444,16 @@ class ScreenCapture:
             pass
 
     async def wait_codec(self, timeout: float = 12.0) -> str | None:
-        """Kodek satri ma'lum bo'lguncha kutadi (birinchi kalit kadrgacha).
+        """Waits until the codec string is known (the first key frame).
 
-        Kutish vaqti ataylab uzun. Sababi Desktop Duplication API'ning
-        ishlash tartibida: u birinchi kadrni ekran O'ZGARGANDA beradi.
-        Ish stoli qimirlamay tursa (masalan to'liq ekranli o'yin
-        ochiq bo'lsa) birinchi kadr bir necha soniya kechikadi -
-        o'lchashda 2.7 dan 6 soniyagacha chiqdi.
+        The timeout is deliberately long. The reason is how the Desktop
+        Duplication API behaves: it gives its first frame when the screen
+        CHANGES. With a still desktop (a full-screen game in front, for
+        instance) the first frame is several seconds late - measured
+        between 2.7 and 6 seconds.
 
-        Kelmasa ham qo'rqinchli emas: kodek aniqlangan zahoti
-        on_codec orqali tomoshabinlarga qayta xabar beriladi.
+        Not getting it is not fatal either: the moment the codec is
+        known, on_codec tells the viewers again.
         """
         try:
             await asyncio.wait_for(self.codec_ready.wait(), timeout=timeout)
@@ -462,23 +461,23 @@ class ScreenCapture:
         except asyncio.TimeoutError:
             pass
 
-        # Sababini yozib qo'yamiz: ilgari bu xato butunlay jim edi va
-        # nima bo'lganini logdan bilib bo'lmasdi
-        log.warning("kodek satri %.0f soniyada aniqlanmadi (%d bayt keldi)%s",
+        # Write down the reason: this failure used to be entirely
+        # silent, and the log said nothing about what happened
+        log.warning("codec string not found in %.0fs (%d bytes arrived)%s",
                     timeout, self.stats.bytes_out,
                     "; ffmpeg: " + " | ".join(self._stderr_tail[-3:])
                     if self._stderr_tail else "")
 
-        # Qayta ishga tushirmaymiz: ekran olish o'zi ishlab turibdi va
-        # kadr kelishi bilan on_codec tomoshabinga xabar beradi. Qayta
-        # yoqish faqat kechiktirar, ustiga tomoshabin ketib bo'lgan
-        # bo'lsa ekran olishni bekordan-bekor qaytadan yoqib yuborardi.
+        # No restart: capture is running, and as soon as a frame comes
+        # in, on_codec tells the viewer. Restarting would only add
+        # delay, and if the viewer had already left it would bring
+        # capture back up for nothing.
         return self.codec
 
     def catch_up(self) -> list[bytes]:
-        """Yangi ulangan tomoshabinga yuboriladigan kadrlar.
+        """The frames sent to a freshly connected viewer.
 
-        Oxirgi kalit kadrdan hozirgacha bo'lgan hammasi. Shu tufayli yangi
-        tomoshabin keyingi kalit kadrni kutmaydi - rasm darhol paydo bo'ladi.
+        Everything from the last key frame up to now, so a new viewer
+        does not wait for the next one - the picture appears at once.
         """
         return list(self._gop)

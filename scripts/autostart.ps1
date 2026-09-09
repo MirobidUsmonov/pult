@@ -1,20 +1,18 @@
 <#
 .SYNOPSIS
-    Pult'ni kompyuter yonganda avtomatik ishga tushirishni sozlaydi.
+    Sets Pult up to start automatically with the computer.
 
 .DESCRIPTION
-    Vazifa rejalashtiruvchisiga (Task Scheduler) "kirganda ishga tush"
-    vazifasini qo'shadi.
+    Adds an "at logon" task to Task Scheduler.
 
-    MUHIM: vazifa ataylab oddiy foydalanuvchi huquqi bilan va "kirganda"
-    yaratiladi, "kompyuter yonganda" emas. Sababi Windows'da sichqoncha
-    va klaviatura hodisalarini yuborish uchun dastur foydalanuvchi
-    seansida ishlashi shart. Xizmat (service) sifatida qo'yilsa u
-    0-seansda qoladi va ish stoliga umuman ta'sir qilolmaydi - bu ko'p
-    odam qoqiladigan joy.
+    IMPORTANT: the task is deliberately created with ordinary user rights
+    and an "at logon" trigger rather than "at startup". The reason is
+    that on Windows a program must run inside the user's session to send
+    mouse and keyboard events. Set up as a service it stays in session 0
+    and cannot touch the desktop at all - a place many people trip over.
 
 .PARAMETER Remove
-    Vazifani o'chiradi.
+    Removes the task.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\autostart.ps1
@@ -30,22 +28,22 @@ $ErrorActionPreference = "Stop"
 if ($Remove) {
     if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-        Write-Host "Avtomatik ishga tushirish o'chirildi." -ForegroundColor Yellow
+        Write-Host "Automatic startup has been removed." -ForegroundColor Yellow
     } else {
-        Write-Host "Bunday vazifa yo'q edi." -ForegroundColor DarkGray
+        Write-Host "There was no such task." -ForegroundColor DarkGray
     }
     return
 }
 
 $repo = Split-Path -Parent $PSScriptRoot
 
-# Konsolsiz Python: pythonw.exe oyna ochmaydi
+# Python without a console: pythonw.exe opens no window
 $python = (Get-Command python -ErrorAction SilentlyContinue).Source
-if (-not $python) { throw "Python topilmadi. Avval Python o'rnating." }
+if (-not $python) { throw "Python not found. Install Python first." }
 $pythonw = $python -replace 'python\.exe$', 'pythonw.exe'
 if (-not (Test-Path $pythonw)) { $pythonw = $python }
 
-# Yig'ilgan .exe bo'lsa o'shani afzal ko'ramiz
+# Prefer a built .exe when there is one
 $exe = Join-Path $repo "dist\Pult\Pult.exe"
 if (Test-Path $exe) {
     $execute = $exe
@@ -55,15 +53,15 @@ if (Test-Path $exe) {
     $arguments = "-m pult"
 }
 
-Write-Host "Loyiha:  $repo"
-Write-Host "Dastur:  $execute $arguments"
+Write-Host "Project: $repo"
+Write-Host "Program: $execute $arguments"
 
 $action = New-ScheduledTaskAction -Execute $execute -Argument $arguments -WorkingDirectory $repo
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 
-# Kechikish: tarmoq ko'tarilishini kutamiz, aks holda dastur IP manzil
-# berilmasidan oldin ishga tushib, sertifikatni noto'g'ri manzil bilan
-# yasashi mumkin.
+# A delay, to wait for the network: started before an IP address is
+# assigned, the program could build its certificate for the wrong
+# address.
 $trigger.Delay = "PT15S"
 
 $settings = New-ScheduledTaskSettingsSet `
@@ -74,8 +72,8 @@ $settings = New-ScheduledTaskSettingsSet `
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 1)
 
-# Limited: administrator huquqi so'ralmaydi. Bu ataylab - dasturga
-# administrator kerak emas va so'ramagani xavfsizroq.
+# Limited: no administrator rights are requested. That is deliberate -
+# the program does not need them, and not asking is safer.
 $principal = New-ScheduledTaskPrincipal `
     -UserId "$env:USERDOMAIN\$env:USERNAME" `
     -LogonType Interactive `
@@ -83,9 +81,9 @@ $principal = New-ScheduledTaskPrincipal `
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal `
-    -Description "Pult - telefondan kompyuterni boshqarish agenti" -Force | Out-Null
+    -Description "Pult - control your computer from your phone" -Force | Out-Null
 
 Write-Host ""
-Write-Host "Tayyor. Pult endi siz tizimga kirganingizda o'zi ishga tushadi." -ForegroundColor Green
-Write-Host "Hozir sinab ko'rish uchun:  Start-ScheduledTask -TaskName $TaskName"
-Write-Host "O'chirish uchun:            .\scripts\autostart.ps1 -Remove"
+Write-Host "Ready. Pult will now start itself when you log in." -ForegroundColor Green
+Write-Host "To try it right now:  Start-ScheduledTask -TaskName $TaskName"
+Write-Host "To remove it:         .\scripts\autostart.ps1 -Remove"

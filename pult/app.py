@@ -1,9 +1,8 @@
 """
-Dasturni ishga tushirishning umumiy qismi.
+The part of startup shared by every entry point.
 
-Terminaldan ishga tushirilsa ham, treydan ishga tushirilsa ham shu
-yerdagi kod ishlaydi - shunda ikkita rejim bir-biridan chetlashib
-ketmaydi.
+Whether the program is launched from a terminal or from the tray, this
+code runs - so the two modes cannot drift apart.
 """
 from __future__ import annotations
 
@@ -27,7 +26,7 @@ class FfmpegMissing(RuntimeError):
 def setup_logging(console: bool = False) -> None:
     cfgmod.log_path().parent.mkdir(parents=True, exist_ok=True)
     handlers: list[logging.Handler] = [
-        # Aylanma log: fayl cheksiz o'smaydi
+        # Rotating log, so the file cannot grow without bound
         logging.handlers.RotatingFileHandler(
             cfgmod.log_path(), maxBytes=1_000_000, backupCount=2, encoding="utf-8"
         )
@@ -47,27 +46,27 @@ def build_server(cfg: cfgmod.Config) -> HostServer:
     path = ff.find_ffmpeg(cfg.ffmpeg_path)
     if not path:
         raise FfmpegMissing(
-            "ffmpeg topilmadi. Uni o'rnating yoki sozlamalar faylida "
-            f"ffmpeg_path ni ko'rsating: {cfgmod.config_path()}"
+            "ffmpeg not found. Install it, or point ffmpeg_path at it in "
+            f"the settings file: {cfgmod.config_path()}"
         )
     caps = ff.probe(path)
     enc = ff.pick_encoder(caps, cfg.stream.encoder)
-    # Sozlama papkasini yozib qo'yamiz: dastur turli usullar bilan ishga
-    # tushirilganda (terminal, vazifa rejalashtiruvchisi, boshqa dastur
-    # ichidan) papka boshqacha bo'lib qolishi mumkin va shunda kalitlar
-    # mos kelmaydi. Bu qatorni ko'rib darrov tushunish oson.
-    log.info("sozlamalar: %s (kompyuter %s)", cfgmod.config_dir(), cfg.host_id[:8])
-    log.info("ffmpeg %s, kodlagich: %s", caps.version, enc["label"])
+    # The settings folder is logged on purpose: depending on how the
+    # program was started (terminal, task scheduler, from inside another
+    # program) it can end up somewhere else, and then the keys stop
+    # matching. This one line makes that obvious at a glance.
+    log.info("settings: %s (computer %s)", cfgmod.config_dir(), cfg.host_id[:8])
+    log.info("ffmpeg %s, encoder: %s", caps.version, enc["label"])
     return HostServer(cfg, caps)
 
 
 def local_base(cfg: cfgmod.Config) -> str:
-    """Kompyuterning o'zida ochiladigan manzil.
+    """The address to open on the computer itself.
 
-    Alohida HTTP eshigi ishlatiladi: o'z-o'zini imzolagan sertifikat
-    bilan brauzer har safar ogohlantirar va dastur "shubhali sayt"
-    bo'lib ko'rinardi. 127.0.0.1 brauzer uchun baribir xavfsiz manzil,
-    shuning uchun video ham HTTPS'siz ishlaydi.
+    A separate plain-HTTP door is used: with a self-signed certificate
+    the browser warned every time and the program looked like a
+    suspicious website. 127.0.0.1 counts as a secure context anyway, so
+    video works there without HTTPS.
     """
     if cfg.tls == "off":
         return f"http://127.0.0.1:{cfg.port}"
@@ -75,31 +74,30 @@ def local_base(cfg: cfgmod.Config) -> str:
 
 
 def pair_url(cfg: cfgmod.Config) -> str:
-    """Kompyuterda ochiladigan ulash sahifasi (QR kod)."""
+    """The pairing page (QR code) as opened on the computer."""
     return f"{local_base(cfg)}/pair?k={cfg.token}"
 
 
 def viewer_url(cfg: cfgmod.Config) -> str:
-    """Telefon ekranini kompyuter monitorida ko'rish uchun havola.
+    """Link for watching the phone's screen on the computer's monitor.
 
-    Sahifa telefondagining o'zi, faqat "view=phone" belgisi bilan:
-    ulangan telefon paydo bo'lishi bilan o'sha manba tanlanadi.
-    Telefon hali ulanmagan bo'lsa sahifa nima qilish kerakligini
-    yozib kutib turadi.
+    It is the same page the phone gets, only with a "view=phone" marker:
+    as soon as a connected phone appears, that source is selected. If no
+    phone is connected yet, the page explains what to do and waits.
     """
     return f"{local_base(cfg)}/#k={cfg.token}&view=phone"
 
 
 def phone_url(cfg: cfgmod.Config) -> str:
-    """Telefonga beriladigan havola.
+    """The link handed to the phone.
 
-    Tunnel sozlangan bo'lsa tashqi manzil afzal: u har joydan ishlaydi
-    va haqiqiy sertifikatga ega.
+    When a tunnel is configured the public address wins: it works from
+    anywhere and carries a real certificate.
     """
-    # Kompyuter raqami ham qo'shiladi: tunnel manzili har safar
-    # o'zgargani uchun ilova havolani ko'rib, qaysi kompyuter ekanini
-    # va qaysi yozuvni yangilash kerakligini shundan biladi. Raqam sir
-    # emas - u kalitsiz /api/info da ham ko'rinadi.
+    # The computer's id is included too. Because the tunnel address is
+    # new on every start, this is how the app knows which computer a
+    # link belongs to and which entry to update. The id is not a
+    # secret - it shows up in /api/info without a key as well.
     tail = f"/#k={cfg.token}&h={cfg.host_id}"
     if cfg.public_url:
         return f"{cfg.public_url.rstrip('/')}{tail}"
@@ -111,55 +109,55 @@ def connection_info(cfg: cfgmod.Config) -> list[str]:
     scheme = "http" if cfg.tls == "off" else "https"
     lines = [
         "",
-        f"  Pult ishga tushdi - {cfg.host_name}",
+        f"  Pult is running - {cfg.host_name}",
         "",
-        "  Telefondan shu manzilga kiring:",
+        "  Open this address on your phone:",
     ]
     if cfg.public_url:
-        lines.append(f"    {cfg.public_url.rstrip('/')}/#k={cfg.token}   <- har joydan")
+        lines.append(f"    {cfg.public_url.rstrip('/')}/#k={cfg.token}   <- from anywhere")
     for url in cfgmod.local_addresses(cfg.port, scheme):
         lines.append(f"    {url}/#k={cfg.token}")
-    lines += ["", f"  Yoki QR kod:  {pair_url(cfg)}"]
+    lines += ["", f"  Or the QR code:  {pair_url(cfg)}"]
     if not cfg.public_url and cfg.remote.mode == "off":
         lines += [
             "",
-            "  Bu manzillar faqat shu Wi-Fi ichida ishlaydi. Har joydan",
-            "  ulanish uchun:  python -m pult --remote cloudflare",
+            "  These addresses only work inside this Wi-Fi. To reach the",
+            "  computer from anywhere:  python -m pult --remote cloudflare",
         ]
     if scheme == "https":
         lines += [
             "",
-            "  Brauzer sertifikat haqida ogohlantiradi - bu normal holat.",
-            "  \"Qo'shimcha\" -> \"Baribir davom etish\" ni bosing. Bir marta.",
+            "  The browser will warn about the certificate - that is expected.",
+            "  Click \"Advanced\" -> \"Proceed anyway\". Once.",
         ]
         fp = tls.fingerprint(cfgmod.config_dir())
         if fp:
-            lines.append(f"  Sertifikat izi: {fp}")
-    lines += ["", f"  Sozlamalar: {cfgmod.config_path()}", ""]
+            lines.append(f"  Certificate fingerprint: {fp}")
+    lines += ["", f"  Settings: {cfgmod.config_path()}", ""]
     return lines
 
 
 async def start_remote(cfg: cfgmod.Config):
-    """Tashqi kirish tunnelini ochadi (sozlamada yoqilgan bo'lsa).
+    """Opens the remote-access tunnel, when enabled in the settings.
 
-    Xato bo'lsa dastur ishlashda davom etadi: mahalliy tarmoqdan
-    ulanish baribir mumkin va uni yo'qotish tunneldan ko'ra yomonroq.
+    On failure the program carries on: the local network still works,
+    and losing that would be worse than losing the tunnel.
     """
     from . import tunnel
 
     try:
         return await tunnel.create(cfg, cfgmod.config_dir())
     except Exception:
-        log.warning("tashqi kirish ochilmadi", exc_info=True)
+        log.warning("could not open remote access", exc_info=True)
         return None
 
 
 async def track_public_url(cfg: cfgmod.Config, tun) -> None:
-    """Tunnel manzilini sozlamaga ko'chirib turadi.
+    """Keeps the settings in step with the tunnel's address.
 
-    Bu bir martalik ish emas: tunnel uzilib qayta ulansa manzil yangi
-    bo'ladi. Eski manzilni saqlab qolish zararli - u ishlamaydi,
-    lekin ishlaydigandek ko'rinadi.
+    This is not a one-off: if the tunnel drops and reconnects, the
+    address is new. Keeping the old one around is harmful - it does not
+    work, but it looks as if it does.
     """
     while True:
         await tun.ready.wait()
@@ -171,12 +169,11 @@ async def track_public_url(cfg: cfgmod.Config, tun) -> None:
 
 
 def start_notifier(cfg: cfgmod.Config, tun=None) -> asyncio.Task | None:
-    """Kompyuter onlayn bo'lganini xabar qilishni fon vazifasi sifatida
-    boshlaydi.
+    """Starts the "computer is online" notification as a background task.
 
-    Alohida vazifa bo'lgani muhim: internet hali yo'q bo'lsa xabarnoma
-    uni kutadi, lekin server bu vaqtda allaqachon ishlab turadi -
-    mahalliy tarmoqdan ulanish uchun internet shart emas.
+    Being a separate task matters: if there is no internet yet the
+    notification waits for it, while the server is already up - the
+    local network does not need internet at all.
     """
     from . import notify
 
@@ -184,9 +181,9 @@ def start_notifier(cfg: cfgmod.Config, tun=None) -> asyncio.Task | None:
         return None
 
     async def run() -> None:
-        # Tunnel manzilini kutamiz: xabarda mahalliy IP emas, har
-        # joydan ochiladigan manzil bo'lishi kerak. Manzil har safar
-        # yangi bo'lgani uchun xabarning asosiy foydasi ham shu.
+        # Wait for the tunnel's address: the message should carry the
+        # address that works from anywhere, not a local IP. Since that
+        # address is new every time, it is the message's main value.
         if tun is not None:
             await tun.wait_url(timeout=90)
         await notify.announce_online(cfg, phone_url(cfg))
@@ -195,11 +192,11 @@ def start_notifier(cfg: cfgmod.Config, tun=None) -> asyncio.Task | None:
 
 
 async def serve(cfg: cfgmod.Config, stop: asyncio.Event, on_ready=None) -> None:
-    """Serverni ishga tushirib, to'xtatish signaligacha kutadi.
+    """Runs the server until the stop signal.
 
-    on_ready server tinglay boshlagach chaqiriladi - tunnel ochilishini
-    kutmasdan. Tunnel bir necha soniya olishi mumkin, mahalliy
-    tarmoqdan ulanish esa allaqachon tayyor.
+    on_ready is called once the server is listening, without waiting for
+    the tunnel. The tunnel can take a few seconds; the local network is
+    ready immediately.
     """
     server = build_server(cfg)
     await server.start()

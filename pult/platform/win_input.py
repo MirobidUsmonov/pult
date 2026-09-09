@@ -1,10 +1,10 @@
 """
-Windows kiritish backend'i - SendInput orqali.
+The Windows input backend, built on SendInput.
 
-Tashqi kutubxona ishlatilmaydi (pyautogui va boshqalar shart emas): ctypes
-bilan to'g'ridan-to'g'ri user32.SendInput chaqiriladi. Bu eng tez va eng
-ishonchli yo'l - skan-kodlar bilan yuborilgani uchun o'yinlar va past
-darajali kiritishni kutadigan dasturlar ham qabul qiladi.
+No external library is used (pyautogui and friends are unnecessary):
+ctypes calls user32.SendInput directly. That is the fastest and most
+reliable path - because it sends scan codes, games and other programs
+that expect low-level input accept it too.
 """
 from __future__ import annotations
 
@@ -16,11 +16,11 @@ user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 
 def _enable_dpi_awareness() -> None:
-    """DPI masshtablangan ekranlarda koordinatalar to'g'ri bo'lishi uchun.
+    """Keeps coordinates correct on DPI-scaled screens.
 
-    Buni ekran o'lchamlari so'ralishidan OLDIN chaqirish shart, aks holda
-    Windows bizga masshtablangan (soxta) o'lchamlarni qaytaradi va barcha
-    bosishlar siljib ketadi.
+    This has to be called BEFORE the screen sizes are asked for,
+    otherwise Windows reports scaled (fake) sizes and every click lands
+    off target.
     """
     try:
         # PROCESS_PER_MONITOR_DPI_AWARE = 2
@@ -114,11 +114,11 @@ user32.SendInput.restype = wintypes.UINT
 
 
 def _send(events: Sequence[INPUT]) -> None:
-    """Hodisalarni bitta chaqiruvda yuboradi.
+    """Sends the events in a single call.
 
-    Bitta SendInput ichida yuborilgan hodisalar atomar: orasiga foydalanuvchining
-    haqiqiy sichqonchasi kirib ketolmaydi. Shuning uchun bosish (down+up) va
-    kombinatsiya (ctrl+c) doim bitta ro'yxat bo'lib yuboriladi.
+    Events sent inside one SendInput are atomic: the user's real mouse
+    cannot slip in between them. That is why a click (down+up) and a
+    combination (ctrl+c) always go out as one list.
     """
     if not events:
         return
@@ -128,14 +128,14 @@ def _send(events: Sequence[INPUT]) -> None:
     if sent != n:
         err = ctypes.get_last_error()
         if err == 5:  # ERROR_ACCESS_DENIED
-            # Windows'ning UIPI himoyasi: administrator huquqi bilan
-            # ochilgan oyna faol bo'lsa, oddiy huquqli dastur unga
-            # kiritish yubora olmaydi. Kursor ekranda harakatlanadi,
-            # lekin bosishlar o'sha oynaga yetib bormaydi.
+            # Windows UIPI protection: while a window opened with
+            # administrator rights is in front, a program with ordinary
+            # rights cannot send input to it. The cursor still moves on
+            # screen, but the clicks never reach that window.
             raise PermissionError(
-                "Faol oyna administrator huquqi bilan ishlayapti - Windows "
-                "unga kiritishga ruxsat bermaydi. Boshqa oynani tanlang yoki "
-                "Pult'ni ham administrator sifatida ishga tushiring."
+                "The active window runs with administrator rights, and "
+                "Windows does not allow input to reach it. Pick another "
+                "window, or start Pult as administrator too."
             )
         raise ctypes.WinError(err)
 
@@ -153,7 +153,7 @@ def _key(scan: int, flags: int, vk: int = 0) -> INPUT:
 
 
 # --------------------------------------------------------------------------
-# Ekranlar
+# Screens
 # --------------------------------------------------------------------------
 
 
@@ -184,28 +184,28 @@ MONITORINFOF_PRIMARY = 0x00000001
 
 
 def _device_number(name: str) -> int:
-    """"\\\\.\\DISPLAY3" -> 3. Raqam topilmasa katta qiymat qaytaradi."""
+    """"\\\\.\\DISPLAY3" -> 3. Returns a large value when there is no number."""
     digits = "".join(ch for ch in name if ch.isdigit())
     return int(digits) if digits else 9999
 
 
 def list_monitors() -> list[dict]:
-    """Ekranlar ro'yxati, qurilma raqami bo'yicha tartiblangan.
+    """The list of screens, ordered by device number.
 
-    Tartib muhim: ekranni olish (ddagrab) uni videokarta chiqishlari
-    tartibida raqamlaydi, biz esa shu raqam bilan kiritishni to'g'ri
-    ekranga yuborishimiz kerak. Ikkalasi mos kelmasa video bitta
-    ekrandan, sichqoncha boshqasidan bo'ladi.
+    The order matters: capture (ddagrab) numbers them in the order of
+    the graphics card's outputs, and we use that same number to send
+    input to the right screen. When the two disagree, the video comes
+    from one screen and the mouse goes to another.
 
-    Avval ro'yxat chapdan o'ngga tartiblangan edi va aynan shu xatoga
-    olib keldi: chapdagi ekran DISPLAY2 bo'lsa, u birinchi o'ringa
-    tushib qolardi. Qurilma raqami (DISPLAY1, DISPLAY2, ...) videokarta
-    tartibiga ancha yaqin. Baribir kafolat yo'q, shuning uchun
-    sozlamalarda qo'lda almashtirish ham bor.
+    The list used to be sorted left to right, and that caused exactly
+    this bug: with DISPLAY2 on the left, it ended up first. The device
+    number (DISPLAY1, DISPLAY2, ...) is much closer to the graphics
+    card's order. It is still no guarantee, which is why the settings
+    also allow swapping them by hand.
     """
     found: list[dict] = []
 
-    def _cb(hmon, hdc, lprect, lparam):  # noqa: ANN001 - WinAPI qayta chaqiruvi
+    def _cb(hmon, hdc, lprect, lparam):  # noqa: ANN001 - a WinAPI callback
         info = MONITORINFOEXW()
         info.cbSize = ctypes.sizeof(MONITORINFOEXW)
         if user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
@@ -230,7 +230,7 @@ def list_monitors() -> list[dict]:
 
 
 def virtual_screen() -> tuple[int, int, int, int]:
-    """Barcha ekranlarni qamrab oluvchi to'rtburchak: (x, y, kenglik, balandlik)."""
+    """The rectangle covering every screen: (x, y, width, height)."""
     g = user32.GetSystemMetrics
     return (
         g(SM_XVIRTUALSCREEN),
@@ -241,7 +241,7 @@ def virtual_screen() -> tuple[int, int, int, int]:
 
 
 # --------------------------------------------------------------------------
-# Sichqoncha
+# Mouse
 # --------------------------------------------------------------------------
 
 _BUTTON_FLAGS = {
@@ -254,10 +254,10 @@ _BUTTON_FLAGS = {
 
 
 def _abs_event(x: int, y: int) -> INPUT:
-    """Mutlaq koordinatani 0..65535 oralig'iga o'tkazadi.
+    """Maps an absolute coordinate into the 0..65535 range.
 
-    VIRTUALDESK bayrog'i bilan koordinatalar butun virtual ish stoliga nisbatan
-    hisoblanadi - shuning uchun ikkinchi monitorga ham to'g'ri tushadi.
+    With the VIRTUALDESK flag the coordinates are relative to the whole
+    virtual desktop, so they land correctly on a second monitor too.
     """
     vx, vy, vw, vh = virtual_screen()
     nx = int(round((x - vx) * 65535.0 / max(vw - 1, 1)))
@@ -272,26 +272,26 @@ def move_to(x: int, y: int) -> None:
 
 
 def move_by_raw(dx: int, dy: int) -> None:
-    """Windows'ning o'z nisbiy harakati.
+    """Windows' own relative movement.
 
-    Diqqat: bunga tizimning kursor tezligi va tezlashuvi qo'llanadi, ya'ni
-    so'ralgan 40 piksel amalda 28 ham bo'lishi mumkin va har kompyuterda
-    boshqacha chiqadi. Trackpad uchun move_by() ishlating.
+    Careful: the system's pointer speed and acceleration apply to it, so
+    the 40 pixels you asked for may turn out to be 28, and differently
+    on every computer. Use move_by() for a trackpad.
     """
     _send([_mouse(int(dx), int(dy), 0, MOUSEEVENTF_MOVE)])
 
 
 def move_by(dx: float, dy: float, bounds: tuple[int, int, int, int] | None = None) -> None:
-    """Aniq nisbiy harakat: kursorni o'qib, mutlaq qilib qaytib qo'yamiz.
+    """Exact relative movement: read the cursor, put it back absolutely.
 
-    Tizimning tezlashuvini butunlay chetlab o'tadi, shuning uchun telefondagi
-    barmoq harakati har kompyuterda bir xil masofa beradi. Sezgirlikni
-    boshqarishni yuqori qatlamga qoldiramiz.
+    This bypasses the system's acceleration entirely, so a finger
+    movement on the phone covers the same distance on every computer.
+    Sensitivity is left to the layer above.
 
-    bounds - (x, y, kenglik, balandlik). Berilsa kursor shu to'rtburchakdan
-    chiqmaydi. Bu ko'p ekranli kompyuterda muhim: telefonda bitta ekran
-    ko'rinib turganda kursor ikkinchisiga o'tib ketsa, foydalanuvchi
-    ko'rmayotgan joyga bosib qo'yadi.
+    bounds is (x, y, width, height). Given, the cursor cannot leave that
+    rectangle. It matters on a multi-screen computer: with one screen
+    visible on the phone, a cursor wandering onto the second one would
+    click somewhere the user cannot see.
     """
     x, y = cursor_pos()
     bx, by, bw, bh = bounds if bounds else virtual_screen()
@@ -335,12 +335,12 @@ def scroll(dy: float = 0, dx: float = 0) -> None:
 
 
 # --------------------------------------------------------------------------
-# Klaviatura
+# Keyboard
 # --------------------------------------------------------------------------
 
-# Brauzerdagi KeyboardEvent.code -> (skan-kod, kengaytirilganmi).
-# Skan-kod jismoniy tugma o'rnini bildiradi, shuning uchun kompyuterdagi
-# klaviatura tili (uz/ru/en) qanday bo'lishidan qat'i nazar bir xil ishlaydi.
+# The browser's KeyboardEvent.code -> (scan code, extended?).
+# A scan code names the physical position of a key, so it works the same
+# whatever keyboard language (uz/ru/en) the computer is set to.
 SCANCODES: dict[str, tuple[int, bool]] = {
     "Escape": (0x01, False),
     "Digit1": (0x02, False), "Digit2": (0x03, False), "Digit3": (0x04, False),
@@ -379,7 +379,7 @@ SCANCODES: dict[str, tuple[int, bool]] = {
     "Numpad0": (0x52, False), "NumpadDecimal": (0x53, False),
     "IntlBackslash": (0x56, False),
     "F11": (0x57, False), "F12": (0x58, False),
-    # Kengaytirilgan (E0 prefiksli) klavishlar
+    # Extended keys (with an E0 prefix)
     "NumpadEnter": (0x1C, True),
     "ControlRight": (0x1D, True),
     "NumpadDivide": (0x35, True),
@@ -398,7 +398,7 @@ SCANCODES: dict[str, tuple[int, bool]] = {
     "MetaLeft": (0x5B, True),
     "MetaRight": (0x5C, True),
     "ContextMenu": (0x5D, True),
-    # Media klavishlari - klaviaturada bo'lmasa ham tizim ularni qabul qiladi
+    # Media keys - the system accepts them even without them on the keyboard
     "AudioVolumeMute": (0x20, True),
     "AudioVolumeDown": (0x2E, True),
     "AudioVolumeUp": (0x30, True),
@@ -412,7 +412,7 @@ SCANCODES: dict[str, tuple[int, bool]] = {
     "BrowserForward": (0x69, True),
 }
 
-# Qisqa nomlar - tugmalar paneli va AI agent shulardan foydalanadi.
+# Short names - the key bar and the AI agent use these.
 ALIASES = {
     "ctrl": "ControlLeft", "control": "ControlLeft",
     "shift": "ShiftLeft", "alt": "AltLeft",
@@ -429,13 +429,13 @@ ALIASES = {
 def resolve_key(name: str) -> tuple[int, bool]:
     code = ALIASES.get(name.lower(), name)
     if code not in SCANCODES and len(name) == 1:
-        # bitta belgi berilgan bo'lsa: "a" -> "KeyA", "5" -> "Digit5"
+        # a single character was given: "a" -> "KeyA", "5" -> "Digit5"
         if name.isalpha():
             code = "Key" + name.upper()
         elif name.isdigit():
             code = "Digit" + name
     if code not in SCANCODES:
-        raise KeyError(f"noma'lum klavish: {name!r}")
+        raise KeyError(f"unknown key: {name!r}")
     return SCANCODES[code]
 
 
@@ -460,7 +460,7 @@ def key(name: str, action: str = "tap") -> None:
 
 
 def combo(keys: Iterable[str]) -> None:
-    """Masalan combo(["ctrl", "shift", "Escape"]) - hammasi birga bosiladi."""
+    """E.g. combo(["ctrl", "shift", "Escape"]) - all pressed together."""
     names = list(keys)
     events: list[INPUT] = []
     for n in names:
@@ -471,21 +471,20 @@ def combo(keys: Iterable[str]) -> None:
 
 
 def type_text(text: str) -> None:
-    """Matnni Unicode sifatida kiritadi.
+    """Types text as Unicode.
 
-    Skan-kod emas, Unicode ishlatilgani muhim: shunda kompyuterdagi klaviatura
-    tili qanday bo'lishidan qat'i nazar o'zbekcha, ruscha, emoji - hammasi
-    to'g'ri yoziladi. Telefonning o'z klaviaturasidan kelgan matn shu yerga
-    tushadi.
+    Using Unicode rather than scan codes matters: whatever keyboard
+    language the computer is set to, Uzbek, Russian and emoji all come
+    out right. Text from the phone's own keyboard arrives here.
     """
     events: list[INPUT] = []
-    # UTF-16 birliklariga bo'lamiz: emoji kabi belgilar ikkita birlikdan iborat
+    # Split into UTF-16 units: characters like emoji take two of them
     data = text.encode("utf-16-le")
     for i in range(0, len(data), 2):
         unit = int.from_bytes(data[i : i + 2], "little")
         events.append(_key(unit, KEYEVENTF_UNICODE))
         events.append(_key(unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP))
-        # SendInput navbati cheksiz emas - uzun matnni bo'lib yuboramiz
+        # The SendInput queue is not endless - send long text in chunks
         if len(events) >= 200:
             _send(events)
             events = []

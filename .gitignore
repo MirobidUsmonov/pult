@@ -16,3 +16,8 @@ android/.gradle/
 android/local.properties
 android/dist/
 android/build-direct/
+
+# Personal delivery helpers: they reach into a separate private project
+# by absolute path and are not part of Pult.
+scripts/send_to_saved.py
+scripts/telegram_relogin.py

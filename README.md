@@ -105,10 +105,10 @@ view follows it — so the cursor is never on a screen you cannot see. This
 matters because in trackpad mode a click carries no coordinates: it lands
 wherever the cursor happens to be, and a cursor left behind on another monitor
 means clicking blind. If you would rather keep the pointer on one screen, turn
-off *Kursor ekranlar orasida yursin* and it stays put.
+off *Let the cursor move between screens* and it stays put.
 
 **If the video shows one screen while the mouse moves on another**, press
-*Ekranlar almashib qolgan* in the settings. Screen capture numbers monitors in
+*The screens are swapped* in the settings. Screen capture numbers monitors in
 the graphics adapter's output order, which is not something the system exposes;
 Pult orders them by device number (`\.\DISPLAY1`, `DISPLAY2`, …), which is
 usually right but cannot be guaranteed. The button rotates the mapping and
@@ -171,7 +171,7 @@ pythonw -m pult                 # tray, no console window
 python -m pult --console        # with logs in the terminal
 ```
 
-Right-click the tray icon → **Telefonni ulash (QR)** → scan the code with your
+Right-click the tray icon → **Connect a phone (QR)** → scan the code with your
 phone.
 
 ### Build a standalone `.exe`
@@ -225,7 +225,7 @@ The toolchain script installs a JDK and the Android SDK into a single folder
 administrator rights — delete the folder and nothing remains. The build produces
 `android/app/build/outputs/apk/debug/Pult-debug-1.0.apk`.
 
-To pair, open **Telefonni ulash** from the tray icon and scan the QR labelled
+To pair, open **Connect a phone** from the tray icon and scan the QR labelled
 *Pult ilovasi* — it opens the app directly and adds the computer. The *Brauzer*
 tab has the plain link for phones without the app.
 
@@ -264,8 +264,8 @@ for now; the indicator stays. What Pult *does* guarantee is that the indicator
 never lingers falsely — sharing stops, and the indicator with it, as soon as the
 connection to the computer drops.
 
-To watch the phone on the computer's own monitor, use the tray menu — **Telefon
-ekranini ko'rish**. It opens the same web UI with `#view=phone`, which selects
+To watch the phone on the computer's own monitor, use the tray menu — **Pult
+window**. It opens the same web UI with `#view=phone`, which selects
 the connected phone as soon as one appears and keeps waiting if none has. On a
 mouse-and-keyboard screen the page drops its touch controls: clicks map
 straight to taps at that point, the wheel scrolls, and the physical keyboard is

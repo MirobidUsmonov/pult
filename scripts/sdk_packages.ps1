@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-    Android SDK paketlarini to'g'ridan-to'g'ri yuklab o'rnatadi.
+    Downloads and installs the Android SDK packages directly.
 
 .DESCRIPTION
-    sdkmanager o'z yuklovchisi bilan juda sekin ishlaydi (o'lchovda 90 KB/s,
-    o'sha serverdan curl esa 440 KB/s berdi). Paketlar oddiy zip fayllar
-    bo'lgani uchun ularni to'g'ridan-to'g'ri olib, joyiga qo'yish mumkin.
+    sdkmanager's own downloader is very slow (measured at 90 KB/s, while
+    curl gave 440 KB/s from the same server). The packages are plain zip
+    files, so they can be fetched directly and put in place.
 
-    Manzillar Google'ning o'z ro'yxatidan (repository2-3.xml) olingan.
+    The URLs come from Google's own index (repository2-3.xml).
 #>
 param(
     [string]$Root = "E:\dev-tools"
@@ -20,7 +20,7 @@ $sdk = Join-Path $Root "android-sdk"
 $dl = Join-Path $Root "downloads"
 New-Item -ItemType Directory -Force $dl | Out-Null
 
-# Har bir paket: manzil, ochilgandan keyingi joyi, arxiv ichidagi papka nomi
+# Each package: URL, where it lands once unpacked, the folder name inside
 $packages = @(
     @{
         name  = "platforms/android-34"
@@ -50,7 +50,7 @@ foreach ($p in $packages) {
         Write-Host "  yuklanmoqda..."
         & curl.exe -L --fail --silent --show-error -o $zip $p.url
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "  XATO: yuklab bo'lmadi" -ForegroundColor Red
+            Write-Host "  ERROR: could not download" -ForegroundColor Red
             exit 1
         }
     }
@@ -60,8 +60,8 @@ foreach ($p in $packages) {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     Expand-Archive -Path $zip -DestinationPath $tmp -Force
 
-    # Arxiv ichida bitta papka bo'ladi (odatda "android-14"), uni
-    # kerakli nom ostiga ko'chiramiz
+    # The archive holds a single folder (usually "android-14"); move it
+    # under the name we need
     $inner = Get-ChildItem $tmp -Directory | Select-Object -First 1
     New-Item -ItemType Directory -Force (Split-Path $p.dest) | Out-Null
     Remove-Item -Recurse -Force $p.dest -ErrorAction SilentlyContinue
@@ -69,9 +69,9 @@ foreach ($p in $packages) {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 
     if (Test-Path (Join-Path $p.dest $p.check)) {
-        Write-Host "  tayyor" -ForegroundColor Green
+        Write-Host "  done" -ForegroundColor Green
     } else {
-        Write-Host "  XATO: $($p.check) topilmadi" -ForegroundColor Red
+        Write-Host "  ERROR: $($p.check) not found" -ForegroundColor Red
         exit 1
     }
 }

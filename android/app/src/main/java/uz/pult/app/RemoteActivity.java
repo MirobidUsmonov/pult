@@ -23,15 +23,15 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 /**
- * Kompyuter ekrani ko'rsatiladigan oyna.
+ * The window that shows the computer screen.
  *
- * Ichida oddiy WebView bor va butun boshqaruv veb-ilovaning o'zida
- * qoladi - shu tufayli ilova bilan brauzer versiyasi hech qachon
- * bir-biridan orqada qolmaydi.
+ * Inside is a plain WebView, and all of the control logic stays in the
+ * web app - which is why the app and the browser version can never fall
+ * behind each other.
  *
- * Ilovaning brauzerdan asosiy farqi ikkitasi: o'z-o'zini imzolagan
- * sertifikatni bir marta so'rab eslab qoladi, va brauzerning manzil
- * qatori, tugmalari kabi keraksiz qismlari yo'q.
+ * The app differs from a browser in two ways: it asks about the
+ * self-signed certificate once and remembers the answer, and it has
+ * none of the browser's clutter - address bar, buttons and the rest.
  */
 public class RemoteActivity extends Activity {
 
@@ -56,13 +56,13 @@ public class RemoteActivity extends Activity {
         Hosts.Host parsed = Hosts.parse(full);
         serverUrl = parsed == null ? full : parsed.url;
 
-        // Ekran o'chib qolmasin: boshqarish paytida foydalanuvchi
-        // ekranga uzoq vaqt tegmasligi mumkin.
+        // Keep the screen on: while controlling, the user may not
+        // touch the screen for a long time.
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        // Kesilgan burchakli telefonlarda rasm butun ekranni egallasin
+        // On phones with a notch, let the picture fill the whole screen
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            // getAttributes() nusxa qaytaradi, shuning uchun o'zgartirib
-            // qaytarib qo'yish kerak - aks holda sozlama qo'llanmaydi.
+            // getAttributes() returns a copy, so it has to be modified
+            // and set back - otherwise the setting is not applied.
             WindowManager.LayoutParams lp = getWindow().getAttributes();
             lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
@@ -95,9 +95,9 @@ public class RemoteActivity extends Activity {
     private void setupWebView() {
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
-        // Veb-ilova sozlamalarni va kalitni localStorage'da saqlaydi
+        // The web app keeps its settings and the key in localStorage
         s.setDomStorageEnabled(true);
-        // Video foydalanuvchi tegmasdan boshlanishi kerak
+        // Video has to start without the user touching anything
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setUseWideViewPort(true);
         s.setLoadWithOverviewMode(true);
@@ -108,8 +108,8 @@ public class RemoteActivity extends Activity {
 
         web.setBackgroundColor(Color.BLACK);
         web.setKeepScreenOn(true);
-        // Uzun bosishda tizimning matn tanlash oynasi chiqmasin -
-        // uzun bosish bizda "ushlab sudrash" imo-ishorasi.
+        // Do not let a long press bring up the system's text selection -
+        // here a long press is the "hold and drag" gesture.
         web.setLongClickable(false);
         web.setOnLongClickListener(v -> true);
         web.setHapticFeedbackEnabled(true);
@@ -129,9 +129,9 @@ public class RemoteActivity extends Activity {
             @Override
             public void onReceivedError(WebView view, WebResourceRequest req, WebResourceError err) {
                 if (req != null && req.isForMainFrame()) {
-                    showStatus("Kompyuterga ulanib bo‘lmadi.\n\n"
-                            + "• Kompyuter yoniqmi va Pult ishlayaptimi?\n"
-                            + "• Telefon o‘sha Wi-Fi tarmog‘idami?\n\n"
+                    showStatus("Could not connect to the computer.\n\n"
+                            + "\u2022 Is the computer on and is Pult running?\n"
+                            + "\u2022 Is the phone on the same Wi-Fi?\n\n"
                             + serverUrl);
                 }
             }
@@ -145,13 +145,12 @@ public class RemoteActivity extends Activity {
     }
 
     /**
-     * Agentdan uning barcha manzillarini so'rab, ro'yxatni yangilaydi.
+     * Asks the agent for all of its addresses and refreshes the list.
      *
-     * Tunnel manzili kompyuter har qayta yonganda o'zgaradi. Agar
-     * ro'yxat yangilanmasa, telefon keyingi safar eskirgan manzilni
-     * sinab, uzoq kutib, keyin ulanolmay qolardi. Ulanish
-     * muvaffaqiyatli bo'lgan payt - ro'yxatni yangilash uchun eng
-     * to'g'ri payt.
+     * The tunnel address changes every time the computer restarts.
+     * Without a refresh the phone would try a stale address next time,
+     * wait a long while and then fail to connect. The moment a
+     * connection succeeds is exactly the right time to refresh.
      */
     private void refreshAddresses() {
         final Hosts.Host known = hosts.find(serverUrl);
@@ -164,15 +163,14 @@ public class RemoteActivity extends Activity {
     }
 
     /**
-     * Sertifikat xatosi: birinchi marta so'raymiz, keyin eslab qolamiz.
+     * A certificate error: ask the first time, remember afterwards.
      *
-     * Agent o'z-o'zini imzolagan sertifikat ishlatadi (brauzerlar video
-     * dekodlashni faqat HTTPS'da beradi), shuning uchun bu xato har
-     * safar keladi. Uni ko'r-ko'rona o'tkazib yuborish xavfli bo'lardi:
-     * o'rtadagi odam boshqa sertifikat bilan ulanib olishi mumkin.
-     * Shuning uchun izni saqlab qo'yamiz va keyin faqat aynan o'shanga
-     * ruxsat beramiz - bu brauzerdagi "baribir davom etish" dan
-     * xavfsizroq.
+     * The agent uses a self-signed certificate (browsers only allow
+     * video decoding over HTTPS), so this error comes up every time.
+     * Waving it through blindly would be dangerous: someone in the
+     * middle could connect with a different certificate. So the
+     * fingerprint is stored and only that exact one is allowed
+     * afterwards - safer than the browser's "proceed anyway".
      */
     private void handleSslError(SslErrorHandler handler, SslError error) {
         String fp = Fingerprint.of(error.getCertificate());
@@ -183,29 +181,33 @@ public class RemoteActivity extends Activity {
                 handler.proceed();
             } else {
                 handler.cancel();
-                showStatus("Sertifikat o‘zgargan.\n\n"
-                        + "Kutilgan: " + Fingerprint.shortForm(known.pin) + "\n"
-                        + "Kelgan:   " + Fingerprint.shortForm(fp) + "\n\n"
-                        + "Bu kompyuterda Pult qayta o‘rnatilgan yoki tarmoq manzili "
-                        + "o‘zgargan bo‘lsa normal holat: ro‘yxatdan o‘chirib qayta "
-                        + "qo‘shing. Aks holda ulanmang.");
+                showStatus("The certificate has changed.\n\n"
+                        + "Expected: " + Fingerprint.shortForm(known.pin) + "\n"
+                        + "Received: " + Fingerprint.shortForm(fp) + "\n\n"
+                        + "That is normal if Pult was reinstalled on this "
+                        + "computer or its network address changed: remove it "
+                        + "from the list and add it again. Otherwise do not "
+                        + "connect.");
             }
             return;
         }
 
         new AlertDialog.Builder(this)
-                .setTitle("Birinchi ulanish")
-                .setMessage("Bu kompyuterni ilk marta ko‘ryapman.\n\n"
+                .setTitle("First connection")
+                .setMessage("This is the first time I have seen this "
+                        + "computer.\n\n"
                         + serverUrl + "\n\n"
-                        + "Sertifikat izi:\n" + Fingerprint.shortForm(fp) + "\n\n"
-                        + "Kompyuterdagi Pult ham shu izni ko‘rsatayotgan bo‘lsa "
-                        + "ishonish mumkin. Keyin bu savol qayta berilmaydi.")
+                        + "Certificate fingerprint:\n"
+                        + Fingerprint.shortForm(fp) + "\n\n"
+                        + "If Pult on the computer shows the same "
+                        + "fingerprint, it can be trusted. You will not be "
+                        + "asked again.")
                 .setCancelable(false)
-                .setPositiveButton("Ishonaman", (d, w) -> {
+                .setPositiveButton("Trust", (d, w) -> {
                     hosts.rememberPin(serverUrl, fp);
                     handler.proceed();
                 })
-                .setNegativeButton("Bekor", (d, w) -> {
+                .setNegativeButton("Cancel", (d, w) -> {
                     handler.cancel();
                     finish();
                 })
@@ -217,7 +219,7 @@ public class RemoteActivity extends Activity {
         status.setVisibility(View.VISIBLE);
     }
 
-    /** Holat qatori va boshqaruv tugmalarini yashiradi. */
+    /** Hides the status bar and the navigation buttons. */
     private void hideBars() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             getWindow().setDecorFitsSystemWindows(false);
@@ -248,15 +250,15 @@ public class RemoteActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        // Tasodifan chiqib ketmaslik uchun ikki marta bosish kerak:
-        // orqaga tugmasi boshqaruv paytida oson bosilib ketadi.
+        // Two presses are needed so nobody leaves by accident: the back
+        // button is easy to hit while controlling.
         long now = System.currentTimeMillis();
         if (now - lastBack < 2000) {
             super.onBackPressed();
             return;
         }
         lastBack = now;
-        Toast.makeText(this, "Chiqish uchun yana bosing", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Press again to leave", Toast.LENGTH_SHORT).show();
     }
 
     @Override

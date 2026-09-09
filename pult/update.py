@@ -1,19 +1,18 @@
 """
-O'z-o'zini yangilash.
+Updating itself.
 
-Yangi versiya chiqqanda foydalanuvchi hech narsa qilmasligi kerak:
-dastur ishga tushganda manbani tekshiradi, yangisi bo'lsa o'zini
-almashtirib qayta ishga tushadi.
+When a new version appears the user should have to do nothing: on
+startup the program checks the source and, if it is newer, replaces
+itself and restarts.
 
-Windows ishlab turgan .exe ustiga yozishga ruxsat bermaydi, lekin uning
-NOMINI O'ZGARTIRISHGA beradi. Shu tufayli almashtirish o'z-o'zidan
-ishlaydi: eski fayl chetga suriladi, yangisi o'sha nom bilan qo'yiladi,
-so'ng yangisi ishga tushirilib eskisi chiqadi. Chetga surilgan fayl
-keyingi safar o'chiriladi.
+Windows will not let a running .exe be overwritten, but it will let it
+be RENAMED. That is what makes the swap work: the old file is moved
+aside, the new one takes its name, the new one is launched and the old
+one exits. The file that was moved aside is deleted on the next run.
 
-Versiya raqami yuritilmaydi - fayllar xesh yig'indisi bo'yicha
-solishtiriladi. Yig'ish har safar raqam qo'yishni talab qilmasin:
-manbadagi fayl boshqacha bo'lsa, demak u yangi.
+There are no version numbers - files are compared by hash. A build
+should not have to remember to bump anything: if the file at the source
+differs, that is the new one.
 """
 from __future__ import annotations
 
@@ -31,18 +30,18 @@ log = logging.getLogger("pult.update")
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 EXE_NAME = "Pult.exe"
-STAGED = "Pult.exe.yangi"
+STAGED = "Pult.exe.new"
 
 
 def running_exe() -> Path | None:
-    """Ishlab turgan .exe. Manba kodidan ishga tushirilgan bo'lsa - None."""
+    """The running .exe. None when started from source."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve()
     return None
 
 
 def digest(path: Path) -> str:
-    """Faylning SHA-256 yig'indisi. O'qib bo'lmasa - bo'sh satr."""
+    """The file's SHA-256. Empty string if it cannot be read."""
     try:
         h = hashlib.sha256()
         with path.open("rb") as f:
@@ -53,10 +52,10 @@ def digest(path: Path) -> str:
         return ""
 
 
-# ------------------------------------------------------------ manba
+# ------------------------------------------------------------ source
 
 def from_folder(source: str) -> Path | None:
-    """Papkadagi Pult.exe. Papka tarmoqdagi umumiy papka ham bo'lishi mumkin."""
+    """Pult.exe in a folder, which may also be a network share."""
     if not source:
         return None
     base = Path(source)
@@ -65,20 +64,20 @@ def from_folder(source: str) -> Path | None:
 
 
 async def from_url(source: str, dest: Path) -> Path | None:
-    """Manzildan yuklab oladi.
+    """Downloads from an address.
 
-    Yuklab bo'lgach nom beriladi: yarim yuklangan fayl hech qachon
-    dastur o'rniga qo'yilmasin.
+    The final name is only given once the download finishes, so a
+    half-downloaded file is never put in the program's place.
     """
     if not source:
         return None
 
     import aiohttp
 
-    tmp = dest.with_suffix(dest.suffix + ".yuklanmoqda")
+    tmp = dest.with_suffix(dest.suffix + ".part")
     try:
-        # Umumiy vaqt chegarasi yo'q: fayl 20 MB dan ortiq va sekin
-        # tarmoqda uzoq ketadi. Chegara faqat kutishga.
+        # No overall timeout: the file is over 20 MB and takes a long
+        # time on a slow link. The limit only applies to waiting.
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=120)
         async with aiohttp.ClientSession(timeout=timeout) as sess:
             async with sess.get(source) as r:
@@ -89,13 +88,13 @@ async def from_url(source: str, dest: Path) -> Path | None:
         tmp.replace(dest)
         return dest
     except Exception as exc:
-        log.warning("yangilanish yuklanmadi: %s: %s", type(exc).__name__, exc)
+        log.warning("update download failed: %s: %s", type(exc).__name__, exc)
         tmp.unlink(missing_ok=True)
         return None
 
 
 async def candidate(cfg) -> Path | None:
-    """Manbadagi fayl hozirgisidan boshqacha bo'lsa - uning yo'li."""
+    """Path to the source file when it differs from the current one."""
     current = running_exe()
     if current is None:
         return None
@@ -109,7 +108,7 @@ async def candidate(cfg) -> Path | None:
     elif mode == "url":
         found = await from_url(cfg.update.source, current.parent / STAGED)
     else:
-        log.warning("noma'lum yangilash rejimi: %s", mode)
+        log.warning("unknown update mode: %s", mode)
         return None
 
     if found is None:
@@ -119,53 +118,58 @@ async def candidate(cfg) -> Path | None:
     return found
 
 
-# ------------------------------------------------------------ qo'llash
+# ------------------------------------------------------------ applying
 
 def swap(new: Path, current: Path) -> bool:
-    """Yangi faylni dastur o'rniga qo'yadi."""
-    old = current.with_name(current.name + ".eski")
+    """Puts the new file in the program's place."""
+    old = current.with_name(current.name + ".old")
     try:
         old.unlink(missing_ok=True)
     except OSError:
-        # Oldingi almashtirishdan qolgan va hali band bo'lishi mumkin
-        old = current.with_name(f"{current.name}.eski-{os.getpid()}")
+        # Left over from an earlier swap and possibly still in use
+        old = current.with_name(f"{current.name}.old-{os.getpid()}")
     try:
         current.rename(old)
     except OSError as exc:
-        log.warning("eski faylni surib bo'lmadi: %s", exc)
+        log.warning("could not move the old file aside: %s", exc)
         return False
     try:
         shutil.copy2(new, current)
         return True
     except OSError as exc:
-        log.error("yangi fayl qo'yilmadi: %s", exc)
-        # Eskisini joyiga qaytaramiz - dastursiz qolmaylik
+        log.error("could not put the new file in place: %s", exc)
+        # Put the old one back - never leave the machine without an agent
         try:
             old.rename(current)
         except OSError:
-            log.error("eski fayl ham qaytarilmadi: %s", old)
+            log.error("the old file could not be restored either: %s", old)
         return False
 
 
 def cleanup(folder: Path) -> None:
-    """Oldingi almashtirishdan qolgan fayllar. Endi ular band emas."""
-    for stale in list(folder.glob(EXE_NAME + ".eski*")) + list(folder.glob(STAGED)):
-        try:
-            stale.unlink()
-        except OSError:
-            pass
+    """Files left over from an earlier swap. They are free by now.
+
+    ".eski" is the name earlier builds used; it stays in the list so an
+    upgrade from one of those does not leave a stray 20 MB file behind.
+    """
+    patterns = [EXE_NAME + ".old*", EXE_NAME + ".eski*", STAGED, "Pult.exe.yangi"]
+    for pattern in patterns:
+        for stale in folder.glob(pattern):
+            try:
+                stale.unlink()
+            except OSError:
+                pass
 
 
 def clean_env() -> dict:
-    """PyInstaller'ning ichki o'zgaruvchilaridan tozalangan muhit.
+    """The environment with PyInstaller's internals stripped out.
 
-    Bitta faylga yig'ilgan dastur o'z holatini muhit o'zgaruvchilari
-    orqali uzatadi (_PYI_..., _MEIPASS2). Dastur o'z ichidan yana
-    o'zini ishga tushirsa, ular meros bo'lib o'tadi va yangi nusxa
-    o'zini "bola jarayon" deb o'ylab qoladi. So'ng otasini tekshiradi
-    va "parent process has different executable" deb xato beradi -
-    ayniqsa yangilanishdan keyin, otaning fayli chetga surilgan
-    bo'lgani uchun. Shuning uchun ularni olib tashlaymiz.
+    A one-file build passes its state through environment variables
+    (_PYI_..., _MEIPASS2). When the program launches itself from the
+    inside, those are inherited and the new copy believes it is already
+    a child process. It then checks its parent and fails with "parent
+    process has different executable" - especially after an update,
+    because the parent's file has been moved aside. So they are removed.
     """
     env = dict(os.environ)
     for key in list(env):
@@ -179,18 +183,18 @@ def relaunch(exe: Path) -> None:
         subprocess.Popen([str(exe)], cwd=str(exe.parent),
                          creationflags=NO_WINDOW, env=clean_env())
     except Exception:
-        log.exception("yangi versiya ishga tushmadi")
+        log.exception("the new version did not start")
 
 
 async def apply_if_any(cfg, launch: bool = True) -> bool:
-    """Yangilanish bo'lsa qo'llaydi.
+    """Applies an update when there is one.
 
-    launch=True bo'lsa yangi nusxani ham ishga tushiradi - bu faqat
-    server hali ko'tarilmagan paytda to'g'ri. Ishlab turgan dasturda
-    launch=False qilib, avval eski nusxani to'xtatish kerak: aks holda
-    yangi nusxa portni band topib, xato oynasi bilan chiqib ketadi.
+    With launch=True the new copy is started as well, which is only
+    correct before the server is up. In a running program use
+    launch=False and stop the old copy first: otherwise the new copy
+    finds the port taken and exits with an error dialog.
 
-    True qaytarsa - dastur almashtirildi.
+    Returns True when the program was replaced.
     """
     current = running_exe()
     if current is None:
@@ -200,27 +204,27 @@ async def apply_if_any(cfg, launch: bool = True) -> bool:
     try:
         new = await candidate(cfg)
     except Exception:
-        log.warning("yangilanishni tekshirib bo'lmadi", exc_info=True)
+        log.warning("could not check for updates", exc_info=True)
         return False
     if new is None:
         return False
 
-    log.info("yangi versiya topildi: %s", new)
+    log.info("new version found: %s", new)
     if not swap(new, current):
         return False
     if launch:
-        log.info("yangilandi, qayta ishga tushirilmoqda")
+        log.info("updated, restarting")
         relaunch(current)
     else:
-        log.info("yangilandi - to'xtagach yangi nusxa ishga tushadi")
+        log.info("updated - the new copy starts once this one stops")
     return True
 
 
 async def watch(cfg, busy, on_ready) -> None:
-    """Ishlab turganda ham vaqti-vaqti bilan tekshiradi.
+    """Also checks periodically while running.
 
-    Yangilanish faqat hech kim ulanmagan paytda qo'llanadi: oqim
-    o'rtasida uzilib qolish yangilanishdan ko'ra yomonroq.
+    An update is only applied when nobody is connected: being cut off
+    mid-stream is worse than waiting for the update.
     """
     import asyncio
 
@@ -236,22 +240,22 @@ async def watch(cfg, busy, on_ready) -> None:
         except asyncio.CancelledError:
             raise
         except Exception:
-            log.warning("yangilanish tekshiruvi xato berdi", exc_info=True)
+            log.warning("the update check failed", exc_info=True)
 
 
 def describe(cfg) -> str:
-    """Trey menyusi va loglar uchun qisqa holat."""
+    """A short status line for the tray menu and the log."""
     mode = (cfg.update.mode or "off").lower()
     if mode in ("off", "", "none"):
-        return "yangilanish o'chirilgan"
-    return f"yangilanish manbasi: {cfg.update.source or '(ko‘rsatilmagan)'}"
+        return "updates disabled"
+    return f"update source: {cfg.update.source or '(not set)'}"
 
 
 def stamp() -> str:
-    """Ishlab turgan faylning belgisi - qaysi yig'ilish ekanini bilish uchun."""
+    """A marker for the running file, to tell builds apart."""
     exe = running_exe()
     if exe is None:
-        return "manba kodidan"
+        return "from source"
     try:
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(exe.stat().st_mtime))
     except OSError:

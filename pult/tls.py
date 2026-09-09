@@ -1,15 +1,15 @@
 """
-O'z-o'zini imzolagan sertifikat yasash.
+Generating a self-signed certificate.
 
-Nega kerak: brauzerlar video dekodlash (WebCodecs), service worker va
-ekranni uyg'oq ushlash kabi imkoniyatlarni faqat "xavfsiz kontekst"da
-beradi. localhost bundan mustasno, lekin telefon kompyuterga mahalliy
-IP orqali kiradi - u xavfsiz hisoblanmaydi. Shuning uchun oddiy HTTP
-bilan dastur telefonda umuman ishlamaydi va HTTPS majburiy bo'ladi.
+Why it is needed: browsers only grant video decoding (WebCodecs),
+service workers and wake lock in a "secure context". localhost is
+exempt, but the phone reaches the computer over a LAN IP, which is not
+considered secure. Over plain HTTP the app therefore does not work on
+the phone at all, which makes HTTPS mandatory.
 
-Sertifikat o'z-o'zini imzolagani uchun brauzer birinchi kirishda
-ogohlantirish ko'rsatadi. Foydalanuvchi bir marta "davom etish" bosadi,
-keyin sahifa xavfsiz kontekstga aylanadi va hammasi ishlaydi.
+Because the certificate signs itself, the browser warns on the first
+visit. The user clicks through once, the page becomes a secure context,
+and everything works from then on.
 """
 from __future__ import annotations
 
@@ -28,16 +28,16 @@ VALID_DAYS = 3650
 
 
 def local_ips() -> list[str]:
-    """Kompyuterning mahalliy IP manzillari."""
+    """The computer's local IP addresses."""
     ips: set[str] = set()
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None):
             addr = info[4][0]
-            if ":" not in addr or addr.count(":") > 1:  # IPv4 yoki IPv6
+            if ":" not in addr or addr.count(":") > 1:  # IPv4 or IPv6
                 ips.add(addr)
     except Exception:
         pass
-    # Internetga chiqish yo'nalishidagi manzil - eng ishonchli usul
+    # The address on the route out to the internet - the most reliable way
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -72,10 +72,10 @@ def _san_entries():
 
 
 def _covers_current_ips(cert_path: Path) -> bool:
-    """Sertifikatdagi manzillar hozirgi tarmoqqa mos keladimi.
+    """Whether the addresses in the certificate match the current network.
 
-    Wi-Fi almashsa IP o'zgaradi va eski sertifikat mos kelmay qoladi -
-    shunda uni qayta yasash kerak.
+    Switching Wi-Fi changes the IP and the old certificate stops
+    matching - then it has to be regenerated.
     """
     try:
         from cryptography import x509
@@ -128,17 +128,17 @@ def generate(cert_path: Path, key_path: Path) -> None:
         key_path.chmod(0o600)
     except Exception:
         pass
-    log.info("yangi sertifikat yasaldi: %s", cert_path)
+    log.info("generated a new certificate: %s", cert_path)
 
 
 def ensure(config_dir: Path) -> tuple[Path, Path]:
-    """Sertifikat mavjudligini ta'minlaydi, kerak bo'lsa qayta yasaydi."""
+    """Makes sure a certificate exists, regenerating it when needed."""
     cert_path = config_dir / CERT_NAME
     key_path = config_dir / KEY_NAME
     if not cert_path.exists() or not key_path.exists():
         generate(cert_path, key_path)
     elif not _covers_current_ips(cert_path):
-        log.info("tarmoq manzili o'zgargan - sertifikat yangilanmoqda")
+        log.info("network address changed - regenerating the certificate")
         generate(cert_path, key_path)
     return cert_path, key_path
 
@@ -151,8 +151,8 @@ def context(config_dir: Path) -> ssl.SSLContext:
 
 
 def fingerprint(config_dir: Path) -> str:
-    """Sertifikat barmoq izi - foydalanuvchi to'g'ri kompyuterga
-    ulanganini tekshira olishi uchun."""
+    """Certificate fingerprint, so the user can confirm they connected
+    to the right computer."""
     try:
         from cryptography import x509
         from cryptography.hazmat.primitives import hashes

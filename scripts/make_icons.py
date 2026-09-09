@@ -1,11 +1,11 @@
 """
-Ilova ikonkalarini yasaydi.
+Generates the app icons.
 
-Alohida grafik muharrir kerak bo'lmasligi uchun ikonkalar kod bilan
-chiziladi - shunda ranglarni o'zgartirish uchun shu faylni tahrirlash
-kifoya va natija har safar bir xil chiqadi.
+They are drawn in code so no separate graphics editor is needed -
+changing the colours means editing this one file, and the result comes
+out identical every time.
 
-Ishlatish:  python scripts/make_icons.py
+Usage:  python scripts/make_icons.py
 """
 from __future__ import annotations
 
@@ -22,24 +22,25 @@ OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
 
 
 def draw_icon(size: int, mode: str = "app") -> Image.Image:
-    """mode: "app" - yumaloq burchakli fon bilan;
-             "maskable" - fon butun maydonda, tasvir kichikroq;
-             "adaptive" - fonsiz, faqat tasvir (Android uni o'zi joylaydi).
+    """mode: "app" - with a rounded-corner background;
+             "maskable" - background over the whole area, smaller artwork;
+             "adaptive" - no background, artwork only (Android places it).
     """
-    # 4 barobar kattaroq chizib, keyin kichraytiramiz: chekkalar silliq chiqadi
+    # Drawn four times larger and scaled down, so the edges come out smooth
     s = size * 4
     img = Image.new("RGBA", (s, s), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
     if mode == "maskable":
-        # Maskable ikonka: fon butun maydonni to'ldiradi, tasvir markazda
-        # kichikroq bo'ladi - tizim uni doira qilib kessa ham buzilmaydi.
+        # A maskable icon: the background fills the whole area and the
+        # artwork is smaller and centred, so it survives being cropped
+        # into a circle.
         d.rectangle([0, 0, s, s], fill=BG)
         scale = 0.62
     elif mode == "adaptive":
-        # Android moslashuvchan ikonkasi: fon alohida qatlam, bu yerda
-        # faqat tasvir. Tizim chekkalarini kesishi mumkin, shuning uchun
-        # tasvir markazdagi xavfsiz doiraga sig'ishi kerak.
+        # An Android adaptive icon: the background is a separate layer
+        # and only the artwork is here. The system may crop the edges,
+        # so the artwork has to fit inside the central safe circle.
         scale = 0.52
     else:
         r = int(s * 0.22)
@@ -69,9 +70,9 @@ def draw_icon(size: int, mode: str = "app") -> Image.Image:
         radius=px(2), fill=ACCENT,
     )
 
-    # Signal yoylari - masofadan boshqarish ishorasi.
-    # Markaz monitorning o'ng-yuqori burchagida: yoylar ekran ichiga
-    # kirmasdan, undan tashqariga tarqaladi.
+    # The signal arcs, a nod to remote control.
+    # Their centre is at the monitor's top-right corner, so they spread
+    # outwards rather than across the screen.
     ax, ay = left + mw - px(1), top + px(1)
     for i, radius in enumerate((px(9), px(17), px(25))):
         box = [ax - radius, ay - radius, ax + radius, ay + radius]
@@ -85,27 +86,27 @@ ANDROID_RES = os.path.join(
     "android", "app", "src", "main", "res",
 )
 
-# Android ikonka o'lchamlari ekran zichligiga qarab
+# Android icon sizes, by screen density
 DENSITIES = {"mdpi": 1, "hdpi": 1.5, "xhdpi": 2, "xxhdpi": 3, "xxxhdpi": 4}
 
 
 def make_android_icons() -> None:
-    """Android ilovasi uchun ikonkalar.
+    """The icons for the Android app.
 
-    Ikki xil ko'rinish yasaladi: eski telefonlar uchun oddiy PNG va
-    yangilari uchun moslashuvchan ikonka (fon alohida, tasvir alohida -
-    tizim uni o'z shakliga kesadi).
+    Two shapes are produced: a plain PNG for older phones and an
+    adaptive icon for newer ones (background and artwork separate, so
+    the system can crop it into its own shape).
     """
     if not os.path.isdir(os.path.dirname(ANDROID_RES)):
-        print("  android papkasi yo'q - o'tkazib yuborildi")
+        print("  no android folder - skipped")
         return
 
     for name, factor in DENSITIES.items():
-        # Oddiy ikonka: 48dp
+        # The plain icon: 48dp
         d = os.path.join(ANDROID_RES, f"mipmap-{name}")
         os.makedirs(d, exist_ok=True)
         draw_icon(int(48 * factor), "app").save(os.path.join(d, "ic_launcher.png"))
-        # Moslashuvchan ikonkaning old qatlami: 108dp
+        # The adaptive icon's foreground layer: 108dp
         draw_icon(int(108 * factor), "adaptive").save(
             os.path.join(d, "ic_launcher_foreground.png"))
 
@@ -132,7 +133,7 @@ def make_android_icons() -> None:
     with open(os.path.join(values, "ic_launcher_colors.xml"), "w", encoding="utf-8") as f:
         f.write(colors)
 
-    print(f"  android ikonkalari: {len(DENSITIES)} zichlik + moslashuvchan")
+    print(f"  android icons: {len(DENSITIES)} densities + adaptive")
 
 
 def main() -> int:
@@ -146,17 +147,17 @@ def main() -> int:
     for name, size, mode in jobs:
         path = os.path.join(OUT, name)
         draw_icon(size, mode).save(path)
-        print(f"  {name}  {size}x{size}  {os.path.getsize(path)} bayt")
+        print(f"  {name}  {size}x{size}  {os.path.getsize(path)} bytes")
 
-    # Windows .exe uchun: bitta faylda bir nechta o'lcham bo'lishi kerak,
-    # aks holda kichik joylarda (masalan vazifalar panelida) xunuk chiqadi.
+    # For the Windows .exe: one file has to hold several sizes,
+    # otherwise it looks ugly in small places such as the taskbar.
     ico = os.path.join(OUT, "pult.ico")
     sizes = [16, 24, 32, 48, 64, 128, 256]
     draw_icon(256).save(ico, format="ICO", sizes=[(s, s) for s in sizes])
-    print(f"  pult.ico  {','.join(map(str, sizes))}  {os.path.getsize(ico)} bayt")
+    print(f"  pult.ico  {','.join(map(str, sizes))}  {os.path.getsize(ico)} bytes")
 
     make_android_icons()
-    print("ikonkalar tayyor:", OUT)
+    print("icons ready:", OUT)
     return 0
 
 

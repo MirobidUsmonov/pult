@@ -1,21 +1,21 @@
 """
-.exe uchun kirish nuqtasi.
+The entry point for the .exe.
 
-PyInstaller modul emas, fayl kutadi - shuning uchun `python -m pult`
-o'rniga shu kichik fayl ishlatiladi.
+PyInstaller expects a file rather than a module, so this small file is
+used instead of `python -m pult`.
 """
 import multiprocessing
 import os
 import sys
 
 if getattr(sys, "frozen", False):
-    # Yig'ilgan .exe ichida modul yo'li o'zgaradi
+    # Inside a built .exe the module path is different
     sys.path.insert(0, os.path.dirname(sys.executable))
 
 from pult.__main__ import main  # noqa: E402
 
 if __name__ == "__main__":
-    # Windows'da jarayon nusxalanganda dastur qayta ishga tushib
-    # ketmasligi uchun
+    # So the program does not start over when Windows clones the
+    # process
     multiprocessing.freeze_support()
     sys.exit(main())

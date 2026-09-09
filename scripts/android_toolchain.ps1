@@ -1,54 +1,56 @@
 <#
 .SYNOPSIS
-    Android APK yig'ish uchun kerakli asboblarni ko'chma qilib o'rnatadi.
+    Installs the tools an Android APK build needs, portably.
 
 .DESCRIPTION
-    JDK va Android SDK ni bitta papkaga yuklab oladi. Tizim sozlamalariga
-    tegilmaydi: PATH ham, registr ham o'zgarmaydi, administrator huquqi
-    kerak emas. Kerak bo'lmay qolsa papkani o'chirish kifoya.
+    Downloads the JDK and the Android SDK into one folder. It leaves the
+    system alone: neither PATH nor the registry is changed, and no
+    administrator rights are needed. If you no longer want it, deleting
+    the folder is enough.
 
-    Skriptni qayta ishga tushirish xavfsiz: yuklab olingan va ochilgan
-    narsalar qaytadan qilinmaydi.
+    Running the script again is safe: whatever is already downloaded and
+    unpacked is not fetched again.
 
 .PARAMETER Root
-    Asboblar joylashadigan papka.
+    The folder the tools go into.
 #>
 param(
     [string]$Root = "E:\dev-tools"
 )
 
-# Diqqat: ErrorActionPreference ataylab "Continue".
-# PowerShell 5.1 da tashqi dasturning stderr'ga yozgani xato deb
-# hisoblanadi va "Stop" bilan skript to'xtab qoladi. java -version ham,
-# sdkmanager ham oddiy xabarlarini stderr'ga yozadi. Shuning uchun
-# muvaffaqiyatni chiqish kodi bilan tekshiramiz.
+# Careful: ErrorActionPreference is "Continue" on purpose.
+# In PowerShell 5.1 anything an external program writes to stderr counts
+# as an error, and with "Stop" the script would halt. Both java -version
+# and sdkmanager write ordinary messages to stderr, so success is
+# checked by exit code instead.
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 
-# JDK manbasi ataylab Amazon: sinovda Adoptium 49 KB/s, Microsoft 54 KB/s
-# bergan bo'lsa, Amazon 2 MB/s berdi. Bir xil fayl, 40 barobar farq.
+# The JDK comes from Amazon on purpose: in testing Adoptium gave
+# 49 KB/s and Microsoft 54 KB/s, while Amazon gave 2 MB/s. The same
+# file, a 40-fold difference.
 $JdkUrl = "https://corretto.aws/downloads/latest/amazon-corretto-17-x64-windows-jdk.zip"
 $CmdToolsUrl = "https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip"
 
 function Die($msg) {
     Write-Host ""
-    Write-Host "XATO: $msg" -ForegroundColor Red
+    Write-Host "ERROR: $msg" -ForegroundColor Red
     exit 1
 }
 
 function Fetch($url, $out) {
     if (Test-Path $out) {
-        Write-Host "  allaqachon yuklangan: $(Split-Path -Leaf $out)"
+        Write-Host "  already downloaded: $(Split-Path -Leaf $out)"
         return
     }
-    Write-Host "  yuklanmoqda: $(Split-Path -Leaf $out)"
+    Write-Host "  downloading: $(Split-Path -Leaf $out)"
     & curl.exe -L --fail --silent --show-error -o $out $url
-    if ($LASTEXITCODE -ne 0) { Die "yuklab bo'lmadi: $url" }
-    Write-Host ("  tayyor: {0:N1} MB" -f ((Get-Item $out).Length / 1MB))
+    if ($LASTEXITCODE -ne 0) { Die "could not download: $url" }
+    Write-Host ("  done: {0:N1} MB" -f ((Get-Item $out).Length / 1MB))
 }
 
 function Unpack($zip, $target, $innerName) {
-    # Arxiv ichida bitta papka bo'ladi, uni kerakli joyga ko'chiramiz
+    # The archive holds a single folder; move it where it belongs
     $tmp = Join-Path $Root "_unpack_tmp"
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     Expand-Archive -Path $zip -DestinationPath $tmp -Force
@@ -74,12 +76,12 @@ $java = Join-Path $jdkDir "bin\java.exe"
 
 Write-Host "=== JDK 17 ==="
 if (Test-Path $java) {
-    Write-Host "  allaqachon o'rnatilgan"
+    Write-Host "  already installed"
 } else {
     Fetch $JdkUrl $jdkZip
-    Write-Host "  ochilmoqda..."
+    Write-Host "  unpacking..."
     Unpack $jdkZip $jdkDir $null
-    if (-not (Test-Path $java)) { Die "JDK ochilmadi" }
+    if (-not (Test-Path $java)) { Die "the JDK did not unpack" }
 }
 
 $env:JAVA_HOME = $jdkDir
@@ -92,27 +94,27 @@ $ctTarget = Join-Path $sdk "cmdline-tools\latest"
 $sdkmanager = Join-Path $ctTarget "bin\sdkmanager.bat"
 
 Write-Host ""
-Write-Host "=== Android SDK asboblari ==="
+Write-Host "=== Android SDK tools ==="
 if (Test-Path $sdkmanager) {
-    Write-Host "  allaqachon o'rnatilgan"
+    Write-Host "  already installed"
 } else {
     Fetch $CmdToolsUrl $ctZip
-    Write-Host "  ochilmoqda..."
-    # sdkmanager o'zini "cmdline-tools/latest" ichida ko'rishni talab qiladi
+    Write-Host "  unpacking..."
+    # sdkmanager insists on finding itself inside "cmdline-tools/latest"
     Unpack $ctZip $ctTarget "cmdline-tools"
-    if (-not (Test-Path $sdkmanager)) { Die "SDK asboblari ochilmadi" }
+    if (-not (Test-Path $sdkmanager)) { Die "the SDK tools did not unpack" }
 }
 
 $env:ANDROID_HOME = $sdk
 $env:ANDROID_SDK_ROOT = $sdk
 
 Write-Host ""
-Write-Host "=== Litsenziyalar ==="
-# sdkmanager litsenziyalarni interaktiv so'raydi. Unga "y" yuborish
-# ishonchsiz: jarayon standart kirishni kutmasligi ham mumkin va shunda
-# o'rnatish jimgina to'xtab qoladi. Shuning uchun tasdiqlarni fayl
-# sifatida yozamiz - CI tizimlari ham shunday qiladi. Qiymatlar Google
-# e'lon qilgan ochiq SHA1 barmoq izlari.
+Write-Host "=== Licences ==="
+# sdkmanager asks about the licences interactively. Piping it a "y" is
+# unreliable: the process may not be reading standard input at all, and
+# then the install stops silently. So the acceptances are written as
+# files, which is what CI systems do too. The values are the public SHA1
+# fingerprints Google publishes.
 $licenses = @{
     "android-sdk-license" = @(
         "8933bad161af4178b1185d1a37fbf41ea5269c55",
@@ -129,21 +131,21 @@ foreach ($name in $licenses.Keys) {
     $text = "`n" + ($licenses[$name] -join "`n") + "`n"
     Set-Content -Path (Join-Path $licDir $name) -Value $text -Encoding ASCII -NoNewline
 }
-Write-Host "  tasdiqlandi ($($licenses.Count) ta)"
+Write-Host "  accepted ($($licenses.Count))"
 
 Write-Host ""
-Write-Host "=== Platforma va yig'ish asboblari ==="
+Write-Host "=== Platform and build tools ==="
 foreach ($pkg in @("platform-tools", "platforms;android-34", "build-tools;34.0.0")) {
-    Write-Host "  o'rnatilmoqda: $pkg"
-    # Chiqishni yashirmaymiz: yashirilganda litsenziya savoli ko'rinmay
-    # qolib, o'rnatilmagani ham bilinmay ketgan edi.
+    Write-Host "  installing: $pkg"
+    # The output is not hidden: hiding it once buried the licence
+    # question, and the failed install went unnoticed.
     & $sdkmanager --sdk_root="$sdk" $pkg | Where-Object { $_ -notmatch "^\[=*\s*\]" }
-    if ($LASTEXITCODE -ne 0) { Die "o'rnatilmadi: $pkg" }
+    if ($LASTEXITCODE -ne 0) { Die "not installed: $pkg" }
 }
 
-# ------------------------------------------------------------ tekshiruv
+# ------------------------------------------------------------- checks
 Write-Host ""
-Write-Host "=== Tekshiruv ==="
+Write-Host "=== Checks ==="
 $ok = $true
 $checks = @(
     @{ n = "java";       p = $java },
@@ -156,7 +158,7 @@ foreach ($c in $checks) {
     if (Test-Path $c.p) {
         Write-Host ("  [OK]  {0}" -f $c.n)
     } else {
-        Write-Host ("  [YOQ] {0}  ->  {1}" -f $c.n, $c.p) -ForegroundColor Yellow
+        Write-Host ("  [MISSING] {0}  ->  {1}" -f $c.n, $c.p) -ForegroundColor Yellow
         $ok = $false
     }
 }
@@ -164,13 +166,13 @@ foreach ($c in $checks) {
 $size = (Get-ChildItem $Root -Recurse -File -ErrorAction SilentlyContinue |
          Measure-Object -Property Length -Sum).Sum / 1GB
 Write-Host ""
-Write-Host ("  jami hajm: {0:N2} GB" -f $size)
+Write-Host ("  total size: {0:N2} GB" -f $size)
 Write-Host "  JAVA_HOME    = $jdkDir"
 Write-Host "  ANDROID_HOME = $sdk"
 
 if ($ok) {
     Write-Host ""
-    Write-Host "Tayyor. Endi:  powershell -File scripts\build_apk.ps1" -ForegroundColor Green
+    Write-Host "Ready. Now:  powershell -File scripts\build_apk.ps1" -ForegroundColor Green
 } else {
-    Die "ba'zi asboblar o'rnatilmadi"
+    Die "some tools were not installed"
 }

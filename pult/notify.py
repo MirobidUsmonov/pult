@@ -1,13 +1,13 @@
 """
-Xabarnomalar: kompyuter yonib internetga ulanganda telefonga xabar.
+Notifications: a message to the phone when the computer comes online.
 
-Telegram tanlangani bejiz emas: telefonda allaqachon o'rnatilgan,
-xabarlar hamma joyda keladi, va push xabarnomalar uchun alohida
-infratuzilma (Firebase va h.k.) qurish shart emas.
+Telegram was not an arbitrary choice: it is already installed on the
+phone, messages arrive everywhere, and no separate push infrastructure
+(Firebase and friends) has to be built.
 
-Chat raqamini qo'lda topish eng bezovta qiladigan qism bo'lgani uchun
-uni dastur o'zi aniqlaydi: siz botga /start yozasiz, dastur getUpdates
-orqali ko'radi va saqlab qo'yadi.
+Finding the chat id by hand is the most tedious part, so the program
+works it out itself: you send /start to the bot, the program sees it
+through getUpdates and stores it.
 """
 from __future__ import annotations
 
@@ -27,18 +27,12 @@ log = logging.getLogger("pult.notify")
 
 API = "https://api.telegram.org/bot{token}/{method}"
 
-OYLAR = [
-    "yanvar", "fevral", "mart", "aprel", "may", "iyun",
-    "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr",
-]
-
 
 def _is_public(url: str) -> bool:
-    """Havolani Telegram tugmasiga qo'yish mumkinmi.
+    """Whether the link can go on a Telegram button.
 
-    Telegram inline tugmalarida faqat ochiq manzillar ishlaydi: mahalliy
-    IP yoki localhost bo'lsa tugma yaratilmaydi, havola matn sifatida
-    yuboriladi.
+    Telegram inline buttons only accept public addresses: for a local IP
+    or localhost no button is made and the link is sent as text.
     """
     try:
         host = urlparse(url).hostname or ""
@@ -47,7 +41,7 @@ def _is_public(url: str) -> bool:
         try:
             return not ipaddress.ip_address(host).is_private
         except ValueError:
-            return "." in host  # domen nomi
+            return "." in host  # a domain name
     except Exception:
         return False
 
@@ -64,7 +58,7 @@ class Telegram:
             async with sess.post(url, json=params) as r:
                 data = await r.json()
         if not data.get("ok"):
-            raise RuntimeError(data.get("description", "Telegram xatosi"))
+            raise RuntimeError(data.get("description", "Telegram error"))
         return data.get("result", {})
 
     async def me(self) -> dict:
@@ -84,10 +78,10 @@ class Telegram:
         await self.call("sendMessage", **params)
 
     async def discover_chat(self, timeout: float = 180) -> str | None:
-        """Botga birinchi yozgan odamning chat raqamini qaytaradi.
+        """Returns the chat id of the first person to write to the bot.
 
-        Uzun so'rov (long polling) ishlatiladi, shuning uchun kutish
-        vaqtida tarmoqqa deyarli murojaat bo'lmaydi.
+        Long polling is used, so almost no requests go over the network
+        while waiting.
         """
         offset = 0
         end = time.monotonic() + timeout
@@ -110,11 +104,11 @@ class Telegram:
 
 
 def os_name() -> str:
-    """Tizim nomi.
+    """The system name.
 
-    platform.release() Windows 11 da ham "10" deb qaytaradi - bu Python'ning
-    ma'lum kamchiligi. Haqiqiy versiyani qurilish raqamidan aniqlaymiz:
-    22000 va undan yuqorisi - Windows 11.
+    platform.release() returns "10" even on Windows 11 - a known Python
+    quirk. The real version comes from the build number: 22000 and above
+    is Windows 11.
     """
     system = platform.system()
     if system == "Windows":
@@ -128,30 +122,27 @@ def os_name() -> str:
 
 def online_message(cfg: cfgmod.Config, url: str) -> str:
     now = datetime.now()
-    date = f"{now.day}-{OYLAR[now.month - 1]}"
     lines = [
-        f"💻 <b>{cfg.host_name}</b> onlayn",
-        f"🕐 {now:%H:%M} · {date}",
-        f"🖥 {os_name()}",
+        f"<b>{cfg.host_name}</b> is online",
+        f"{now:%H:%M} · {now:%d %b}",
+        os_name(),
         "",
         f"<code>{url}</code>",
     ]
-    # Tunnel manzili har safar yangi bo'ladi - buni aytmasak,
-    # foydalanuvchi eski havolani saqlab qo'yib, keyin nega
-    # ishlamayotganini tushunmay qoladi.
+    # The tunnel address is new every time. Without saying so, someone
+    # saves the old link and then cannot work out why it stopped working.
     if _is_public(url):
-        lines += ["", "🌍 Har qanday tarmoqdan ochiladi. Kompyuter "
-                      "qayta yonganda havola yangilanadi."]
+        lines += ["", "Works from any network. The link changes when the "
+                      "computer restarts."]
     return "\n".join(lines)
 
 
 async def wait_online(timeout: float = 0) -> bool:
-    """Internet paydo bo'lishini kutadi.
+    """Waits for the internet to appear.
 
-    Kompyuter yonganda dastur tarmoqdan oldin ishga tushishi mumkin,
-    shuning uchun darhol xabar yuborishga urinish deyarli doim
-    muvaffaqiyatsiz bo'ladi. Telegram serveriga murojaat qilib
-    ko'ramiz - baribir bizga kerak bo'ladigan manzil shu.
+    When the computer boots, the program can start before the network
+    does, so sending a message straight away almost always fails. We
+    poll Telegram's own server - it is the address we need anyway.
     """
     delay = 2.0
     started = time.monotonic()
@@ -171,41 +162,41 @@ async def wait_online(timeout: float = 0) -> bool:
 
 
 async def announce_online(cfg: cfgmod.Config, url: str) -> None:
-    """Kompyuter onlayn bo'lganini xabar qiladi. Xato bo'lsa jimgina o'tadi."""
+    """Announces that the computer is online. Fails quietly."""
     t = cfg.telegram
     if not (t.enabled and t.on_start and t.bot_token and t.chat_id):
         return
     try:
         await wait_online()
         await Telegram(t.bot_token, t.chat_id).send(
-            online_message(cfg, url), button=("Boshqarish", url)
+            online_message(cfg, url), button=("Open Pult", url)
         )
-        log.info("Telegram xabari yuborildi")
+        log.info("Telegram message sent")
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        # Xabar yuborilmagani dasturning ishlashiga to'sqinlik qilmasligi kerak
-        log.warning("Telegram xabari yuborilmadi: %s", exc)
+        # A message that did not go out must not stop the program
+        log.warning("Telegram message not sent: %s", exc)
 
 
 async def setup_interactive(token: str) -> int:
-    """`--telegram <token>` uchun: botni tekshiradi va chat raqamini topadi."""
+    """For `--telegram <token>`: checks the bot and finds the chat id."""
     tg = Telegram(token)
     try:
         me = await tg.me()
     except Exception as exc:
-        print(f"Bot tokeni ishlamadi: {exc}")
+        print(f"The bot token did not work: {exc}")
         return 1
 
     username = me.get("username", "?")
-    print(f"Bot topildi: @{username}")
+    print(f"Bot found: @{username}")
     print()
-    print(f"  Endi Telegram'da @{username} ni oching va /start yuboring.")
-    print("  Kutyapman…")
+    print(f"  Now open @{username} in Telegram and send /start.")
+    print("  Waiting…")
 
     chat_id = await tg.discover_chat(timeout=180)
     if not chat_id:
-        print("Xabar kelmadi. Qayta urinib ko'ring.")
+        print("No message arrived. Try again.")
         return 1
 
     cfg = cfgmod.load()
@@ -216,9 +207,9 @@ async def setup_interactive(token: str) -> int:
 
     tg.chat_id = chat_id
     await tg.send(
-        f"✅ <b>{cfg.host_name}</b> ulandi.\n"
-        "Bundan keyin kompyuter yonganda shu yerga xabar keladi."
+        f"<b>{cfg.host_name}</b> is connected.\n"
+        "From now on you will get a message here when it comes online."
     )
-    print(f"Tayyor. Chat raqami: {chat_id}")
-    print("Sinov xabari yuborildi - Telegram'ni tekshiring.")
+    print(f"Done. Chat id: {chat_id}")
+    print("A test message was sent - check Telegram.")
     return 0

@@ -1,8 +1,8 @@
 """
-Tizimga bog'liq qismlar. Bu yerda faqat to'g'ri backend tanlanadi.
+Platform-specific parts. All this module does is pick the right backend.
 
-Yangi tizim qo'shish uchun mos modul yozib, quyidagi shartga qo'shish
-kifoya - yuqori qatlamlar o'zgarmaydi.
+To add a system, write the matching module and extend the check below -
+the layers above stay unchanged.
 """
 from __future__ import annotations
 
@@ -12,16 +12,16 @@ _system = platform.system()
 
 if _system == "Windows":
     from . import win_input as inp  # noqa: F401
-else:  # pragma: no cover - hozircha faqat Windows to'liq qo'llab-quvvatlanadi
+else:  # pragma: no cover - only Windows is fully supported for now
     inp = None  # type: ignore[assignment]
 
 
 def input_backend():
-    """Kiritish moduli. Yo'q bo'lsa tushunarli xato beradi."""
+    """The input module. Fails with a clear message when missing."""
     if inp is None:
         raise RuntimeError(
-            f"{_system} uchun kiritish moduli hali yozilmagan "
-            "(hozircha Windows qo'llab-quvvatlanadi)"
+            f"the input backend for {_system} has not been written yet "
+            "(Windows is supported for now)"
         )
     return inp
 

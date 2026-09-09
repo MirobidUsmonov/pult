@@ -1,19 +1,19 @@
 """
-Tashqi kirish: kompyuterni bitta Wi-Fi chegarasidan chiqarish.
+Remote access: getting the computer past the edge of one Wi-Fi.
 
-Muammo shundaki, uy routerida port ochish ko'pchilikda ishlamaydi -
-operatorlar oq IP bermaydi. Yechim teskari yo'nalishda: kompyuterning
-o'zi tashqariga chiqib tunnel ochadi, telefon esa tunnelning ochiq
-manziliga ulanadi. Bu har qanday tarmoqda ishlaydi va routerga
-tegmaydi.
+The problem is that opening a port on a home router does not work for
+most people - carriers do not hand out public addresses. The way out
+runs the other direction: the computer dials outward and holds a tunnel
+open, and the phone connects to the tunnel's public address. That works
+on any network and touches no router settings.
 
-Hozircha cloudflared'ning "tezkor tunnel" rejimi ishlatiladi: hisob
-ham, domen ham kerak emas. Qo'shimcha yutuq - manzil haqiqiy
-sertifikatga ega, ya'ni brauzer ogohlantirmaydi va WebCodecs ishlaydi.
+For now cloudflared's "quick tunnel" mode is used: no account, no
+domain. A bonus is that the address carries a real certificate, so the
+browser does not warn and WebCodecs works.
 
-Kamchiligi: manzil har ishga tushganda yangi bo'ladi. Shuning uchun u
-Telegram xabari bilan yuboriladi - baribir kompyuter yonganda xabar
-ketadi, manzil o'sha xabarga qo'shiladi.
+The catch: the address is new on every start. That is why it is
+delivered in the Telegram message - one is sent when the computer comes
+online anyway, so the address rides along with it.
 """
 from __future__ import annotations
 
@@ -28,17 +28,17 @@ from pathlib import Path
 
 log = logging.getLogger("pult.tunnel")
 
-# cloudflared tezkor tunnel manzilini shu ko'rinishda chop etadi
+# cloudflared prints the quick-tunnel address in this shape
 URL_RE = re.compile(rb"https://[a-z0-9][a-z0-9-]*\.trycloudflare\.com")
 
 RELEASE = "https://github.com/cloudflare/cloudflared/releases/latest/download"
 
-# Konsol oynasi ochilmasligi kerak: dastur fon rejimida ishlaydi
+# No console window may appear: the program runs in the background
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 def asset_name() -> str | None:
-    """Shu tizim uchun cloudflared fayl nomi."""
+    """The cloudflared file name for this system."""
     machine = platform.machine().lower()
     if sys.platform == "win32":
         return "cloudflared-windows-386.exe" if machine in ("i386", "x86") \
@@ -49,18 +49,18 @@ def asset_name() -> str | None:
         if machine.startswith("arm"):
             return "cloudflared-linux-arm"
         return "cloudflared-linux-amd64"
-    # macOS uchun arxiv beriladi, uni ochish kerak - hozircha
-    # foydalanuvchi o'zi o'rnatgani sodda: brew install cloudflared
+    # macOS ships an archive that would have to be unpacked - for now it
+    # is simpler for the user to install it: brew install cloudflared
     return None
 
 
 def find_binary(config_dir: Path, hint: str = "") -> Path | None:
-    """cloudflared'ni topadi: sozlamada ko'rsatilgan, yonidagi, PATH'dagi."""
+    """Finds cloudflared: the configured path, then ours, then PATH."""
     if hint:
         p = Path(hint)
         if p.is_file():
             return p
-        log.warning("sozlamadagi cloudflared topilmadi: %s", p)
+        log.warning("cloudflared from the settings was not found: %s", p)
 
     name = asset_name()
     if name:
@@ -75,45 +75,45 @@ def find_binary(config_dir: Path, hint: str = "") -> Path | None:
 
 
 async def download(config_dir: Path) -> Path | None:
-    """cloudflared'ni yuklab oladi.
+    """Downloads cloudflared.
 
-    Bir marta bo'ladigan ish: fayl sozlamalar papkasiga tushadi va
-    keyingi safar shundan olinadi.
+    A one-time job: the file lands in the settings folder and is taken
+    from there afterwards.
     """
     name = asset_name()
     if not name:
-        log.warning("bu tizim uchun avtomatik yuklash yo'q - cloudflared'ni "
-                    "o'zingiz o'rnating")
+        log.warning("no automatic download for this system - install "
+                    "cloudflared yourself")
         return None
 
     import aiohttp
 
     target = config_dir / "bin" / name
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + ".yuklanmoqda")
+    tmp = target.with_suffix(target.suffix + ".part")
     url = f"{RELEASE}/{name}"
 
-    # Fayl ~35 MB. Sekin tarmoqda bu o'n daqiqalab ketadi, shuning
-    # uchun umumiy vaqt chegarasi qo'yilmaydi - u ishlab turgan
-    # yuklashni ham uzib qo'yardi. Chegara faqat kutishga: ma'lumot
-    # kelmay qolsa uziladi.
+    # The file is around 50 MB. On a slow link that takes tens of
+    # minutes, so there is no overall timeout - it would cut off a
+    # download that is making progress. The limit is on waiting only:
+    # it fires when no data arrives at all.
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=120)
 
-    # Uzilib qolgan yuklash boshidan boshlanmasin: yarim fayl saqlanadi
-    # va davomi so'raladi. Sekin tarmoqda bu farqni bildiradi.
+    # An interrupted download must not start over: the partial file is
+    # kept and the rest is requested. On a slow link that matters.
     have = tmp.stat().st_size if tmp.is_file() else 0
     headers = {"Range": f"bytes={have}-"} if have else {}
-    log.info("cloudflared yuklanmoqda%s: %s",
-             f" ({have / 1048576:.1f} MB dan davom)" if have else "", url)
+    log.info("downloading cloudflared%s: %s",
+             f" (resuming at {have / 1048576:.1f} MB)" if have else "", url)
 
     try:
         async with aiohttp.ClientSession(timeout=timeout) as sess:
             async with sess.get(url, headers=headers) as r:
                 if r.status == 416:
-                    # Server "bunday oraliq yo'q" dedi - fayl allaqachon
-                    # to'liq bo'lishi mumkin, boshqattan yuklaymiz
+                    # The server says there is no such range - the file
+                    # may already be complete; start over
                     tmp.unlink(missing_ok=True)
-                    raise RuntimeError("yarim fayl yaroqsiz, qayta urinib ko'ring")
+                    raise RuntimeError("the partial file is unusable, try again")
                 r.raise_for_status()
                 resume = r.status == 206
                 if not resume:
@@ -125,8 +125,8 @@ async def download(config_dir: Path) -> Path | None:
                     async for chunk in r.content.iter_chunked(256 * 1024):
                         f.write(chunk)
                         done += len(chunk)
-                        # Belgisiz kutish dastur qotib qolgandek
-                        # ko'rinadi - har 5 MB da holatni yozamiz.
+                        # Waiting with no sign of progress looks like the
+                        # program has hung - log the state every 5 MB.
                         if done - step >= 5 * 1048576:
                             step = done
                             if total:
@@ -135,21 +135,21 @@ async def download(config_dir: Path) -> Path | None:
                                          done / 1048576, total / 1048576)
                             else:
                                 log.info("cloudflared: %.1f MB", done / 1048576)
-        # Yozib bo'lgach nom beramiz: yarim yuklangan fayl ishlatilmasin
+        # Named only once written, so a partial file is never used
         tmp.replace(target)
         if sys.platform != "win32":
             target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
-        log.info("cloudflared tayyor: %s (%.1f MB)",
+        log.info("cloudflared ready: %s (%.1f MB)",
                  target, target.stat().st_size / 1048576)
         return target
     except Exception as exc:
-        # Yarim fayl ataylab saqlanadi: keyingi urinish shundan davom etadi
-        log.warning("cloudflared yuklanmadi: %s: %s", type(exc).__name__, exc)
+        # The partial file is kept on purpose: the next attempt resumes
+        log.warning("cloudflared download failed: %s: %s", type(exc).__name__, exc)
         return None
 
 
 class Tunnel:
-    """Ishlab turgan tunnel. Uzilsa o'zi qayta ko'tariladi."""
+    """A running tunnel. Rebuilds itself when it drops."""
 
     def __init__(self, config_dir: Path, hint: str, local_url: str) -> None:
         self.config_dir = config_dir
@@ -172,22 +172,22 @@ class Tunnel:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                log.warning("tunnel xatosi: %s", exc)
-            # Tunnel uzildi. Manzil endi ishlamaydi - uni tozalaymiz,
-            # aks holda eski manzil to'g'ridek ko'rinib turardi.
+                log.warning("tunnel error: %s", exc)
+            # The tunnel dropped. The address no longer works, so it is
+            # cleared - otherwise a dead address would look valid.
             self.url = ""
             self.ready.clear()
-            log.info("tunnel uzildi, %.0f soniyadan keyin qayta urinamiz", delay)
+            log.info("tunnel dropped, retrying in %.0f seconds", delay)
             await asyncio.sleep(delay)
             delay = min(delay * 1.8, 120)
 
     async def _ensure_binary(self) -> Path:
-        """cloudflared'ni topadi yoki yuklab oladi.
+        """Finds or downloads cloudflared.
 
-        Bu qayta urinish siklining ichida turadi: sekin tarmoqda
-        yuklash uzilib qolishi mumkin va u holda keyingi urinish yarim
-        fayldan davom etadi. Yuklashni ishga tushishdan oldin qilsak,
-        dastur uni kutib turib qolardi.
+        This sits inside the retry loop: on a slow link the download can
+        be interrupted, and then the next attempt resumes from the
+        partial file. Downloading before startup would make the program
+        wait for it.
         """
         if self.binary and self.binary.is_file():
             return self.binary
@@ -195,7 +195,7 @@ class Tunnel:
         if found is None:
             found = await download(self.config_dir)
         if found is None:
-            raise RuntimeError("cloudflared topilmadi")
+            raise RuntimeError("cloudflared not found")
         self.binary = found
         return found
 
@@ -204,10 +204,10 @@ class Tunnel:
         cmd = [
             str(binary), "tunnel",
             "--url", self.local_url,
-            # Mahalliy server o'z-o'zini imzolagan sertifikat ishlatadi
+            # The local server uses a self-signed certificate
             "--no-tls-verify",
             "--no-autoupdate",
-            # Manzilni shu oqimdan o'qiymiz
+            # The address is read from this stream
             "--loglevel", "info",
         ]
         proc = await asyncio.create_subprocess_exec(
@@ -217,7 +217,7 @@ class Tunnel:
             creationflags=NO_WINDOW,
         )
         self._proc = proc
-        log.info("cloudflared ishga tushdi (pid %s)", proc.pid)
+        log.info("cloudflared started (pid %s)", proc.pid)
         try:
             assert proc.stderr
             async for line in proc.stderr:
@@ -225,7 +225,7 @@ class Tunnel:
                 if m and not self.url:
                     self.url = m.group(0).decode("ascii")
                     self.ready.set()
-                    log.info("tashqi manzil: %s", self.url)
+                    log.info("public address: %s", self.url)
         finally:
             if proc.returncode is None:
                 proc.terminate()
@@ -238,7 +238,7 @@ class Tunnel:
         try:
             await asyncio.wait_for(self.ready.wait(), timeout=timeout)
         except asyncio.TimeoutError:
-            log.warning("tunnel manzili %.0f soniyada kelmadi", timeout)
+            log.warning("no tunnel address after %.0f seconds", timeout)
         return self.url
 
     async def stop(self) -> None:
@@ -249,7 +249,7 @@ class Tunnel:
             except asyncio.CancelledError:
                 pass
             except Exception:
-                log.warning("tunnelni to'xtatishda xato", exc_info=True)
+                log.warning("error while stopping the tunnel", exc_info=True)
             self._task = None
         proc = self._proc
         if proc and proc.returncode is None:
@@ -260,12 +260,12 @@ class Tunnel:
 
 
 async def create(cfg, config_dir: Path) -> Tunnel | None:
-    """Sozlamaga qarab tunnel ochadi. Yoqilmagan bo'lsa None qaytaradi."""
+    """Opens a tunnel according to the settings. None when disabled."""
     mode = (cfg.remote.mode or "off").lower()
     if mode in ("off", "", "none"):
         return None
     if mode != "cloudflare":
-        log.warning("noma'lum tashqi kirish rejimi: %s", mode)
+        log.warning("unknown remote-access mode: %s", mode)
         return None
 
     scheme = "http" if cfg.tls == "off" else "https"

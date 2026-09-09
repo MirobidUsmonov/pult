@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Qorong'i mavzu: ilova ham veb-qismi ham qora fonda -->
+    <!-- A dark theme: both the app and the web part sit on black -->
     <style name="PultTheme" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">#0B0D10</item>
         <item name="android:statusBarColor">#0B0D10</item>

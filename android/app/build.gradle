@@ -31,7 +31,7 @@ android {
         buildConfig true
     }
 
-    // Yig'ilgan fayl nomi tushunarli bo'lsin
+    // Give the built file a readable name
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
             outputFileName = "Pult-${variant.name}-${variant.versionName}.apk"

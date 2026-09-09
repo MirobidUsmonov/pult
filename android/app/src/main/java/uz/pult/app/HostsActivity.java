@@ -27,16 +27,16 @@ import android.widget.Toast;
 import java.util.List;
 
 /**
- * Boshlang'ich oyna: ulanadigan kompyuterlar ro'yxati.
+ * The first screen: the list of computers to connect to.
  *
- * Tartib XML'da emas, kodda quriladi. Sabab oddiy: ilova juda kichik va
- * bitta ro'yxatdan iborat, XML tartib fayllari esa qo'shimcha kutubxona
- * (AndroidX) tortib keladi. Ularsiz APK ikki barobar kichik chiqadi.
+ * The layout is built in code, not in XML. The reason is simple: the app
+ * is tiny and consists of one list, while XML layout files drag in an
+ * extra library (AndroidX). Without them the APK is half the size.
  */
 public class HostsActivity extends Activity {
 
-    // Ranglar veb-interfeys bilan bir xil (style.css dagi o'zgaruvchilar):
-    // qatlamli qorong'i yuzalar, bitta urg'u rangi
+    // The colours match the web interface (the variables in style.css):
+    // layered dark surfaces, one accent colour
     private static final int BG = 0xFF0A0C10;
     private static final int PANEL = 0xFF11151B;
     private static final int PANEL2 = 0xFF181D25;
@@ -54,15 +54,15 @@ public class HostsActivity extends Activity {
     private Hosts hosts;
     private LinearLayout list;
 
-    // Bu uchtasi ataylab static: ruxsat so'rash uchun tizim
-    // sozlamalariga o'tilganda Android bu oynani butunlay yo'q qilib,
-    // qaytganda qaytadan yaratishi mumkin. Oddiy maydon bo'lsa
-    // to'xtagan joy yo'qolar va odam nima uchun hech narsa
-    // bo'lmayotganini tushunmay qolardi.
+    // These three are static on purpose: while the user is away in the
+    // system settings granting a permission, Android may destroy this
+    // activity entirely and recreate it on return. As ordinary fields
+    // they would lose their place, and people would be left wondering
+    // why nothing happens.
     private static Hosts.Host pendingShare;
-    /** Sozlamalarga ruxsat so'rab yuborilgan kompyuter. */
+    /** The computer we sent the user to the settings for. */
     private static Hosts.Host pendingAccess;
-    /** Batareya istisnosi so'rab yuborilgan kompyuter. */
+    /** The computer we asked for a battery exemption for. */
     private static Hosts.Host pendingBattery;
 
     @Override
@@ -73,13 +73,12 @@ public class HostsActivity extends Activity {
 
         handleIncomingLink(getIntent());
 
-        // Ilgari bitta kompyuter bo'lsa u darrov ochilardi. Bu endi
-        // zarar keltiradi: ilovada ikkita yo'nalish bor va ruxsat
-        // so'rash uchun tizim sozlamalariga chiqib kelinganda Android
-        // oynani qaytadan yaratadi - o'shanda kompyuter ekrani
-        // o'z-o'zidan ochilib, odam ekranini uzatolmay qolardi.
-        // Ro'yxat ikkita ochiq tugmadan iborat, bitta bosish ortiqcha
-        // emas.
+        // A single computer used to be opened immediately. That does
+        // harm now: the app has two directions, and after a trip to the
+        // system settings for a permission Android recreates the
+        // activity - at which point the computer screen opened by
+        // itself and the user could no longer share their own. The list
+        // has two plainly labelled buttons; one press is not too much.
     }
 
     @Override
@@ -94,26 +93,26 @@ public class HostsActivity extends Activity {
         super.onResume();
         refresh();
 
-        // Batareya sozlamasidan qaytdi - to'xtagan joyidan davom etamiz
+        // Back from the battery settings - carry on where we stopped
         if (pendingBattery != null) {
             Hosts.Host h = pendingBattery;
             pendingBattery = null;
             if (batteryFree()) {
-                Toast.makeText(this, "Ruxsat berildi", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Permission granted", Toast.LENGTH_SHORT).show();
             }
             requestProjection(h);
             return;
         }
 
-        // Sozlamalardan qaytdi - nima bo'lganini tekshiramiz
+        // Back from the settings - check what happened
         if (pendingAccess != null) {
             Hosts.Host h = pendingAccess;
             pendingAccess = null;
             if (InputService.get() != null) {
-                // Ruxsat berildi - to'xtagan joyidan davom etamiz. Aks
-                // holda odam kartaga qaytib, ⇧ ni qaytadan bosishi
-                // kerak bo'lardi va nima uchunligi tushunarsiz qolardi.
-                Toast.makeText(this, "Ruxsat berildi", Toast.LENGTH_SHORT).show();
+                // Granted - carry on where we stopped. Otherwise people
+                // would have to go back to the card and press the button
+                // again, with no clue why.
+                Toast.makeText(this, "Permission granted", Toast.LENGTH_SHORT).show();
                 requestProjection(h);
             } else {
                 explainRestricted();
@@ -122,31 +121,33 @@ public class HostsActivity extends Activity {
     }
 
     /**
-     * Android 13 dan boshlab paydo bo'lgan "cheklangan sozlama" to'sig'i.
+     * The "restricted setting" barrier, added in Android 13.
      *
-     * Play Market'dan tashqarida o'rnatilgan ilovaga maxsus imkoniyatlarni
-     * yoqishga ruxsat berilmaydi: sozlamalar sahifasida qator ko'rinadi,
-     * lekin xira va bosilmaydi, "App was denied access" oynasi chiqadi.
+     * An app installed outside the Play Store is not allowed to turn on
+     * accessibility services: the row is there in the settings, but it
+     * is greyed out and unclickable, and an "App was denied access"
+     * dialog appears.
      *
-     * Buni ilova ichidan hal qilib bo'lmaydi - bu ataylab qo'yilgan
-     * himoya va uni faqat foydalanuvchi ilova sahifasidagi menyudan
-     * ocha oladi. Bizning qo'limizdan keladigani - qayerga borishni
-     * aniq aytish va o'sha sahifani ochib berish.
+     * This cannot be solved from inside the app - it is a deliberate
+     * protection, and only the user can lift it, from the menu on the
+     * app's own settings page. All we can do is say exactly where to go
+     * and open that page for them.
      */
     private void explainRestricted() {
         if (android.os.Build.VERSION.SDK_INT < 33) return;
         new AlertDialog.Builder(this)
-                .setTitle("Android yo‘l bermadi")
-                .setMessage("«Cheklangan sozlama» himoyasi ishga tushdi — u "
-                        + "Play Market’dan tashqarida o‘rnatilgan ilovalarga "
-                        + "maxsus imkoniyatlarni yoqishga to‘sqinlik qiladi.\n\n"
-                        + "Ochish uchun:\n"
-                        + "1. Tugmani bosing — Pult sahifasi ochiladi\n"
-                        + "2. O‘ng yuqoridagi ⋮ menyusini bosing\n"
-                        + "3. «Allow restricted settings» ni tanlang\n"
-                        + "4. Qaytib kelib, yana «Yoqish» ni bosing")
-                .setPositiveButton("Pult sahifasini ochish", (d, w) -> openAppDetails())
-                .setNegativeButton("Keyinroq", null)
+                .setTitle("Android blocked it")
+                .setMessage("The \u201crestricted setting\u201d protection "
+                        + "kicked in \u2014 it stops apps installed outside "
+                        + "the Play Store from turning on accessibility "
+                        + "services.\n\n"
+                        + "To unlock it:\n"
+                        + "1. Press the button \u2014 the Pult page opens\n"
+                        + "2. Tap the \u22ee menu in the top right\n"
+                        + "3. Choose \u201cAllow restricted settings\u201d\n"
+                        + "4. Come back and press \u201cTurn on\u201d again")
+                .setPositiveButton("Open the Pult page", (d, w) -> openAppDetails())
+                .setNegativeButton("Later", null)
                 .show();
     }
 
@@ -154,12 +155,12 @@ public class HostsActivity extends Activity {
         Intent i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                 Uri.fromParts("package", getPackageName(), null));
         if (!tryStart(i)) {
-            Toast.makeText(this, "Ilova sahifasini ochib bo‘lmadi",
+            Toast.makeText(this, "Could not open the app page",
                     Toast.LENGTH_LONG).show();
         }
     }
 
-    // ------------------------------------------------------------ tartib
+    // ------------------------------------------------------------ layout
 
     private void buildUi() {
         LinearLayout root = new LinearLayout(this);
@@ -176,7 +177,7 @@ public class HostsActivity extends Activity {
         root.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("Kompyuterlar");
+        sub.setText("Computers");
         sub.setTextColor(MUTED);
         sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         sub.setPadding(0, dp(2), 0, dp(18));
@@ -189,7 +190,7 @@ public class HostsActivity extends Activity {
         root.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        TextView add = button("+  Kompyuter qo‘shish", ACCENT, ACCENT_INK);
+        TextView add = button("+  Add a computer", ACCENT, ACCENT_INK);
         add.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         add.setPadding(dp(16), dp(16), dp(16), dp(16));
         add.setOnClickListener(v -> askForLink());
@@ -197,8 +198,9 @@ public class HostsActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView hint = new TextView(this);
-        hint.setText("«Boshqarish» — kompyuter ekrani telefonda. "
-                + "«Ekranimni uzatish» — telefon ekrani kompyuterda.");
+        hint.setText("\u201cControl\u201d \u2014 the computer screen on "
+                + "the phone. \u201cShare my screen\u201d \u2014 the phone "
+                + "screen on the computer.");
         hint.setTextColor(MUTED);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         hint.setPadding(dp(4), dp(14), dp(4), 0);
@@ -211,11 +213,11 @@ public class HostsActivity extends Activity {
         list.removeAllViews();
         List<Hosts.Host> all = hosts.all();
         if (all.isEmpty()) {
-            // Bo'sh ro'yxat - ilovadagi birinchi ko'rinish. Shunchaki
-            // "bo'sh" deb yozish o'rniga nima qilish kerakligini aytamiz.
-            // Bo'sh holat: bezaksiz, faqat nima qilish kerakligi
+            // An empty list is the app's first impression. Rather than
+            // writing "empty", say what to do about it. Plain, with no
+            // decoration - only the next step.
             TextView head = new TextView(this);
-            head.setText("Hali kompyuter yo‘q");
+            head.setText("No computers yet");
             head.setTextColor(TEXT);
             head.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
             head.setTypeface(Typeface.DEFAULT_BOLD);
@@ -223,9 +225,9 @@ public class HostsActivity extends Activity {
             list.addView(head);
 
             TextView empty = new TextView(this);
-            empty.setText("Kompyuterda soat yonidagi Pult belgisini bosing — "
-                    + "oynada QR kod chiqadi. Uni skanerlang yoki havolani "
-                    + "pastdagi tugma orqali qo‘shing.");
+            empty.setText("On the computer, click the Pult icon next to "
+                    + "the clock \u2014 a QR code appears in the window. Scan "
+                    + "it, or add the link with the button below.");
             empty.setTextColor(MUTED);
             empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             empty.setLineSpacing(0, 1.3f);
@@ -233,9 +235,9 @@ public class HostsActivity extends Activity {
             list.addView(empty);
             return;
         }
-        // Uzatish yoqilgan bo'lsa buni ro'yxat tepasida aniq ko'rsatamiz:
-        // ilgari faqat kartadagi kichik belgi o'zgarardi va uzatish
-        // ketayotganini payqash qiyin edi.
+        // When sharing is on, say so plainly above the list: before,
+        // only a small mark on the card changed and it was hard to
+        // notice that sharing was running.
         if (ScreenService.isRunning()) {
             LinearLayout banner = new LinearLayout(this);
             banner.setOrientation(LinearLayout.HORIZONTAL);
@@ -244,14 +246,14 @@ public class HostsActivity extends Activity {
             banner.setPadding(dp(14), dp(10), dp(8), dp(10));
 
             TextView text = new TextView(this);
-            text.setText("●  Ekran kompyuterga uzatilmoqda");
+            text.setText("\u25cf  Sharing the screen with the computer");
             text.setTextColor(OK);
             text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             text.setTypeface(Typeface.DEFAULT_BOLD);
             banner.addView(text, new LinearLayout.LayoutParams(0,
                     ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-            TextView stop = pill("To‘xtatish", OK, ACCENT_INK);
+            TextView stop = pill("Stop", OK, ACCENT_INK);
             stop.setOnClickListener(v -> stopShare());
             banner.addView(stop);
 
@@ -267,13 +269,13 @@ public class HostsActivity extends Activity {
     }
 
     /**
-     * Bitta kompyuter kartasi.
+     * One computer's card.
      *
-     * Ikkita yo'nalish ikkita ochiq yozilgan tugma bilan: "Boshqarish"
-     * (kompyuter ekrani telefonda) va "Ekranimni uzatish" (telefon
-     * ekrani kompyuterda). Ilgari ikkinchisi kichik ⇧ belgisi edi va
-     * u nima qilishini bilib bo'lmasdi - belgi bosilgan-bosilmagani
-     * ham sezilmasdi.
+     * Two directions, two plainly labelled buttons: "Control" (the
+     * computer screen on the phone) and "Share my screen" (the phone
+     * screen on the computer). The second one used to be a small arrow
+     * icon whose purpose was unguessable - you could not even tell
+     * whether it had been pressed.
      */
     private View card(Hosts.Host h) {
         LinearLayout card = new LinearLayout(this);
@@ -281,7 +283,7 @@ public class HostsActivity extends Activity {
         card.setBackground(rounded(PANEL, LINE, 10));
         card.setPadding(dp(16), dp(14), dp(16), dp(14));
 
-        // Nom qatori: holat nuqtasi + nom
+        // The name row: a status dot plus the name
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.HORIZONTAL);
         head.setGravity(Gravity.CENTER_VERTICAL);
@@ -303,26 +305,26 @@ public class HostsActivity extends Activity {
 
         TextView url = new TextView(this);
         String note = h.url;
-        // Ikkala yo'l ham ma'lum bo'lsa buni aytamiz: foydalanuvchi
-        // boshqa tarmoqqa o'tganda ham ishlashini oldindan bilib
-        // tursin, "ishlamay qoldi" deb o'ylamasin.
+        // When both routes are known, say so: people should know in
+        // advance that it still works from another network, rather than
+        // assuming it broke.
         int far = 0;
         for (String u : h.urls) {
             if (!Hosts.isLocal(u)) far++;
         }
-        if (far > 0 && Hosts.isLocal(h.url)) note += "  ·  internet orqali ham";
-        if (h.pin.isEmpty()) note += "  ·  hali tasdiqlanmagan";
+        if (far > 0 && Hosts.isLocal(h.url)) note += "  \u00b7  over the internet too";
+        if (h.pin.isEmpty()) note += "  \u00b7  not verified yet";
         url.setText(note);
         url.setTextColor(MUTED);
         url.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f);
         url.setPadding(dp(18), dp(4), 0, dp(14));
         card.addView(url);
 
-        // Tugmalar qatori
+        // The button row
         LinearLayout acts = new LinearLayout(this);
         acts.setOrientation(LinearLayout.HORIZONTAL);
 
-        TextView control = button("Boshqarish", ACCENT, ACCENT_INK);
+        TextView control = button("Control", ACCENT, ACCENT_INK);
         control.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         control.setPadding(dp(12), dp(11), dp(12), dp(11));
         control.setBackground(rounded(ACCENT, ACCENT, 8));
@@ -333,7 +335,7 @@ public class HostsActivity extends Activity {
         acts.addView(control, l1);
 
         boolean on = ScreenService.isRunning();
-        TextView share = button(on ? "To‘xtatish" : "Ekranimni uzatish", PANEL2, on ? OK : TEXT);
+        TextView share = button(on ? "Stop" : "Share my screen", PANEL2, on ? OK : TEXT);
         share.setBackground(rounded(PANEL2, on ? OK : LINE2, 8));
         share.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         share.setPadding(dp(12), dp(11), dp(12), dp(11));
@@ -346,7 +348,7 @@ public class HostsActivity extends Activity {
 
         card.addView(acts);
 
-        // Uzun bosish - ro'yxatdan o'chirish
+        // A long press removes it from the list
         card.setOnLongClickListener(v -> {
             confirmRemove(h);
             return true;
@@ -359,17 +361,17 @@ public class HostsActivity extends Activity {
         return card;
     }
 
-    // -------------------------------------------------- ekranni ulashish
+    // ------------------------------------------------------ screen sharing
 
     private void startShare(Hosts.Host h) {
         if (h.pin.isEmpty()) {
             new AlertDialog.Builder(this)
-                    .setTitle("Avval bir marta ulaning")
-                    .setMessage("Ekranni uzatish uchun sertifikat izi kerak. "
-                            + "Kompyuterni bir marta oching — iz saqlanadi, "
-                            + "keyin bu ishlaydi.")
-                    .setPositiveButton("Ochish", (d, w) -> open(h))
-                    .setNegativeButton("Bekor", null)
+                    .setTitle("Connect once first")
+                    .setMessage("Sharing your screen needs the certificate "
+                            + "fingerprint. Open the computer once \u2014 the "
+                            + "fingerprint is stored and this will work.")
+                    .setPositiveButton("Open", (d, w) -> open(h))
+                    .setNegativeButton("Cancel", null)
                     .show();
             return;
         }
@@ -384,55 +386,56 @@ public class HostsActivity extends Activity {
         requestProjection(h);
     }
 
-    /** Ilova batareya tejashdan ozod qilinganmi. */
+    /** Whether the app is exempt from battery saving. */
     private boolean batteryFree() {
         try {
             android.os.PowerManager pm =
                     (android.os.PowerManager) getSystemService(Context.POWER_SERVICE);
             return pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
         } catch (Exception e) {
-            // Aniqlab bo'lmasa to'sqinlik qilmaymiz
+            // If it cannot be determined, do not get in the way
             return true;
         }
     }
 
     /**
-     * Batareya tejashdan istisno so'raydi.
+     * Asks for an exemption from battery saving.
      *
-     * Ekran o'chgach uzatish to'xtab qolishining eng ko'p uchraydigan
-     * sababi shu: tizim ilovani "uxlatadi" va xizmat o'ldiriladi.
-     * Buni ilova ichidan hal qilib bo'lmaydi - faqat foydalanuvchi
-     * ruxsat bera oladi. Majburiy emas: rad etsa ham uzatish
-     * ishlaydi, faqat ekran o'chganda uzilishi mumkin.
+     * This is the most common reason sharing stops once the screen goes
+     * off: the system puts the app to sleep and the service is killed.
+     * It cannot be handled from inside the app - only the user can
+     * grant it. It is not mandatory: refused, sharing still works, it
+     * may just drop when the screen turns off.
      */
     private void askBattery(Hosts.Host h) {
         new AlertDialog.Builder(this)
-                .setTitle("Ekran o‘chganda ishlashi uchun")
-                .setMessage("Android batareyani tejash uchun ilovalarni "
-                        + "uxlatadi. Shunda ekran o‘chishi bilan uzatish "
-                        + "to‘xtab qoladi.\n\n"
-                        + "Tugmani bosing va «Ruxsat berish» ni tanlang.")
-                .setPositiveButton("Ruxsat so‘rash", (d, w) -> {
+                .setTitle("So it keeps working with the screen off")
+                .setMessage("Android puts apps to sleep to save battery, "
+                        + "and then sharing stops the moment the screen "
+                        + "goes off.\n\n"
+                        + "Press the button and choose \u201cAllow\u201d.")
+                .setPositiveButton("Ask for permission", (d, w) -> {
                     Intent i = new Intent(
                             Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
                             Uri.fromParts("package", getPackageName(), null));
                     if (!tryStart(i)) {
-                        // Ba'zi telefonlarda to'g'ridan-to'g'ri so'rash
-                        // yopiq - umumiy ro'yxatni ochamiz
+                        // On some phones asking directly is blocked -
+                        // open the general list instead
                         tryStart(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
                     }
                     pendingBattery = h;
                 })
-                .setNeutralButton("Baribir davom etish", (d, w) -> requestProjection(h))
-                .setNegativeButton("Bekor", null)
+                .setNeutralButton("Continue anyway", (d, w) -> requestProjection(h))
+                .setNegativeButton("Cancel", null)
                 .show();
     }
 
     /**
-     * Ekranni ko'rsatish uchun ruxsat so'raydi.
+     * Asks for permission to capture the screen.
      *
-     * Android buni har safar so'raydi va uni saqlab qo'yishning iloji
-     * yo'q - bu ataylab qo'yilgan himoya, chetlab o'tib bo'lmaydi.
+     * Android asks every single time and there is no way to remember
+     * the answer - a deliberate protection that cannot be worked
+     * around.
      */
     private void requestProjection(Hosts.Host h) {
         pendingShare = h;
@@ -441,15 +444,14 @@ public class HostsActivity extends Activity {
 
         Intent intent;
         if (android.os.Build.VERSION.SDK_INT >= 34) {
-            // Android 14 dan boshlab tizim "butun ekran" yoki "bitta
-            // ilova" deb so'raydi va ilova tanlash ro'yxatini
-            // ko'rsatadi. Pult uchun bitta ilovani uzatishning ma'nosi
-            // yo'q: kompyuterdan telefonni boshqarish uchun butun
-            // ekran kerak, aks holda bosh ekran ham, boshqa ilovalar
-            // ham ko'rinmaydi.
+            // From Android 14 on, the system asks "the whole screen" or
+            // "a single app" and shows an app chooser. Sharing one app
+            // makes no sense for Pult: controlling the phone from the
+            // computer needs the whole screen, otherwise neither the
+            // home screen nor any other app is visible.
             //
-            // createConfigForDefaultDisplay bilan so'ralganda tizim
-            // ortiqcha savolni umuman bermaydi.
+            // Asked with createConfigForDefaultDisplay, the system does
+            // not put that question at all.
             intent = mpm.createScreenCaptureIntent(
                     MediaProjectionConfig.createConfigForDefaultDisplay());
         } else {
@@ -458,45 +460,45 @@ public class HostsActivity extends Activity {
         startActivityForResult(intent, REQ_PROJECTION);
     }
 
-    /** Boshqarish xizmati yoqilmagan - sozlamalarga yo'naltiramiz. */
+    /** The input service is off - send the user to the settings. */
     private void askForAccessibility(Hosts.Host h) {
         new AlertDialog.Builder(this)
-                .setTitle("Boshqarish uchun ruxsat kerak")
-                .setMessage("Kompyuter telefonga bosishi uchun «Pult — "
-                        + "telefonni boshqarish» xizmatini yoqish kerak.\n\n"
-                        + "Tugmani bossangiz o‘sha sahifa ochiladi — "
-                        + "shunchaki yoqib, orqaga qayting.\n\n"
-                        + "Bu Android himoyasi: hech bir ilova boshqa "
-                        + "ilovalarga o‘zicha bosa olmaydi.\n\n"
-                        + "Faqat ekranni ko‘rsatmoqchi bo‘lsangiz, "
-                        + "yoqmasdan ham davom etish mumkin.")
-                .setPositiveButton("Yoqish", (d, w) -> {
-                    // Qaytib kelganda ishni o'zi davom ettirsin
+                .setTitle("Control needs a permission")
+                .setMessage("For the computer to tap on the phone, the "
+                        + "\u201cPult \u2014 control this phone\u201d service "
+                        + "has to be turned on.\n\n"
+                        + "Press the button and that page opens \u2014 just "
+                        + "turn it on and come back.\n\n"
+                        + "This is an Android protection: no app may tap on "
+                        + "other apps by itself.\n\n"
+                        + "If you only want to show your screen, you can "
+                        + "continue without it.")
+                .setPositiveButton("Turn on", (d, w) -> {
+                    // Let it carry on by itself when we come back
                     pendingAccess = h;
                     openAccessibilitySettings();
                 })
-                .setNeutralButton("Faqat ko‘rsatish", (d, w) -> requestProjection(h))
-                .setNegativeButton("Bekor", null)
+                .setNeutralButton("Show only", (d, w) -> requestProjection(h))
+                .setNegativeButton("Cancel", null)
                 .show();
     }
 
     /**
-     * Pult xizmatining sozlamalar sahifasini ochadi.
+     * Opens the settings page for the Pult service.
      *
-     * Oddiy ACTION_ACCESSIBILITY_SETTINGS umumiy ro'yxatni ochadi va
-     * odam Pult'ni o'sha ro'yxatdan qidirishi kerak bo'ladi - ba'zi
-     * telefonlarda u "Yuklab olingan xizmatlar" ichida yashiringan
-     * bo'ladi va topib bo'lmaydi.
+     * A plain ACTION_ACCESSIBILITY_SETTINGS opens the general list and
+     * leaves people to find Pult in it - on some phones it is buried
+     * under "Downloaded services" and simply cannot be found.
      *
-     * Uchta yo'l, shu tartibda: xizmatning o'z sahifasi (Android 12+),
-     * ro'yxat ichida kerakli qatorni ajratib ko'rsatish, va oxirida
-     * oddiy ro'yxat.
+     * Three routes, in this order: the service's own page (Android
+     * 12+), the list with the right row highlighted, and finally the
+     * plain list.
      */
     private void openAccessibilitySettings() {
         String service = new ComponentName(this, InputService.class).flattenToString();
 
-        // Doimiy nomlar o'rniga satrlar: shunda eskiroq SDK bilan
-        // yig'ilganda ham kompilyatsiya buzilmaydi
+        // Strings rather than constants, so building against an older
+        // SDK does not break compilation
         if (android.os.Build.VERSION.SDK_INT >= 31) {
             Intent direct = new Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS");
             direct.putExtra("android.intent.extra.COMPONENT_NAME", service);
@@ -511,7 +513,7 @@ public class HostsActivity extends Activity {
         if (tryStart(highlighted)) return;
 
         if (tryStart(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))) return;
-        Toast.makeText(this, "Sozlamalarni ochib bo‘lmadi", Toast.LENGTH_LONG).show();
+        Toast.makeText(this, "Could not open the settings", Toast.LENGTH_LONG).show();
     }
 
     private boolean tryStart(Intent intent) {
@@ -526,7 +528,7 @@ public class HostsActivity extends Activity {
     private void stopShare() {
         Intent i = new Intent(this, ScreenService.class).setAction(ScreenService.ACTION_STOP);
         startService(i);
-        Toast.makeText(this, "Ekran uzatish to‘xtatildi", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Screen sharing stopped", Toast.LENGTH_SHORT).show();
         list.postDelayed(this::refresh, 400);
     }
 
@@ -535,7 +537,7 @@ public class HostsActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQ_PROJECTION) return;
         if (resultCode != RESULT_OK || data == null || pendingShare == null) {
-            Toast.makeText(this, "Ekran olishga ruxsat berilmadi", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Screen capture was not allowed", Toast.LENGTH_LONG).show();
             return;
         }
         Hosts.Host h = pendingShare;
@@ -550,39 +552,39 @@ public class HostsActivity extends Activity {
         svc.putExtra(ScreenService.EXTRA_RESULT_DATA, data);
         startForegroundService(svc);
 
-        Toast.makeText(this, "Ekran kompyuterga uzatilmoqda", Toast.LENGTH_LONG).show();
+        Toast.makeText(this, "Sharing the screen with the computer", Toast.LENGTH_LONG).show();
         list.postDelayed(this::refresh, 600);
     }
 
-    // ------------------------------------------------------------ amallar
+    // ------------------------------------------------------------ actions
 
     private void open(Hosts.Host h) {
         if (h.token.isEmpty()) {
-            Toast.makeText(this, "Bu yozuvda kalit yo‘q, qayta qo‘shing",
+            Toast.makeText(this, "This entry has no key, add it again",
                     Toast.LENGTH_LONG).show();
             return;
         }
-        // Qaysi manzil ishlashini oldindan aniqlaymiz: bitta Wi-Fi
-        // ichida mahalliy manzil tunneldan ancha tez, boshqa
-        // tarmoqdan esa faqat tunnel ishlaydi. Tekshiruv tarmoq ishi
-        // bo'lgani uchun alohida oqimda bajariladi.
+        // Work out which address will work beforehand: on the same
+        // Wi-Fi a local address is much faster than the tunnel, and
+        // from another network only the tunnel works. The check is
+        // network work, so it runs on its own thread.
         if (h.candidates().size() < 2) {
             launch(h, h.url);
             return;
         }
-        Toast.makeText(this, "Ulanish yo‘li tanlanmoqda…", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Choosing a route\u2026", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
             String best = Reach.pick(h, this);
             runOnUiThread(() -> {
                 if (best == null) {
-                    // Hech biri javob bermadi. Baribir oxirgi ishlagan
-                    // manzilni ochamiz - u yerdagi xato oynasi
-                    // sababini aniqroq tushuntiradi.
+                    // None of them answered. Open the last working
+                    // address anyway - the error page there explains
+                    // the reason better than we can.
                     launch(h, h.url);
                 } else {
                     if (!Hosts.strip(best).equals(Hosts.strip(h.url))) {
                         Toast.makeText(this, Hosts.isLocal(best)
-                                ? "Wi-Fi orqali ulanmoqda" : "Internet orqali ulanmoqda",
+                                ? "Connecting over Wi-Fi" : "Connecting over the internet",
                                 Toast.LENGTH_SHORT).show();
                     }
                     launch(h, best);
@@ -600,12 +602,12 @@ public class HostsActivity extends Activity {
     private void confirmRemove(Hosts.Host h) {
         new AlertDialog.Builder(this)
                 .setTitle(h.display())
-                .setMessage("Ro‘yxatdan o‘chirilsinmi?")
-                .setPositiveButton("O‘chirish", (d, w) -> {
+                .setMessage("Remove it from the list?")
+                .setPositiveButton("Remove", (d, w) -> {
                     hosts.remove(h.url);
                     refresh();
                 })
-                .setNegativeButton("Bekor", null)
+                .setNegativeButton("Cancel", null)
                 .show();
     }
 
@@ -617,26 +619,28 @@ public class HostsActivity extends Activity {
         input.setHintTextColor(MUTED);
         input.setPadding(dp(16), dp(14), dp(16), dp(14));
 
-        // Havola almashish buferida bo'lsa oldindan qo'yamiz - odam uni
-        // kompyuterdan nusxalab kelgan bo'lishi ehtimoli katta.
+        // If the link is on the clipboard, fill it in - chances are it
+        // was copied from the computer just now.
         String clip = clipboard();
         if (clip != null && (clip.contains("#k=") || clip.startsWith("pult://"))) {
             input.setText(clip);
         }
 
         new AlertDialog.Builder(this)
-                .setTitle("Kompyuter qo‘shish")
-                // Havolani qayerdan olishni aytmaslik eng ko'p adashtirgan
-                // joy edi: oyna ochiladi-yu, nima yozishni bilib bo'lmaydi
-                .setMessage("Kompyuterda soat yonidagi Pult belgisini bosing → "
-                        + "«Telefonni ulash».\n\n"
-                        + "• QR kodni kamera bilan skanerlang, yoki\n"
-                        + "• «Telegramga yuborish» ni bosing va kelgan havolani "
-                        + "bosib turib «Ulashish → Pult» qiling, yoki\n"
-                        + "• havolani nusxalab shu yerga qo‘ying.")
+                .setTitle("Add a computer")
+                // Not saying where to get the link was the single most
+                // confusing thing: a dialog opens and there is no way to
+                // tell what to type into it
+                .setMessage("On the computer, click the Pult icon next to the "
+                        + "clock \u2192 \u201cConnect a phone\u201d.\n\n"
+                        + "\u2022 Scan the QR code with the camera, or\n"
+                        + "\u2022 press \u201cSend to Telegram\u201d, then "
+                        + "long-press the link and choose \u201cShare \u2192 "
+                        + "Pult\u201d, or\n"
+                        + "\u2022 copy the link and paste it here.")
                 .setView(input)
-                .setPositiveButton("Qo‘shish", (d, w) -> addFromLink(input.getText().toString()))
-                .setNegativeButton("Bekor", null)
+                .setPositiveButton("Add", (d, w) -> addFromLink(input.getText().toString()))
+                .setNegativeButton("Cancel", null)
                 .show();
     }
 
@@ -656,11 +660,11 @@ public class HostsActivity extends Activity {
     private void addFromLink(String link) {
         Hosts.Host h = Hosts.parse(link);
         if (h == null) {
-            Toast.makeText(this, "Havola tushunarsiz", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "The link makes no sense", Toast.LENGTH_LONG).show();
             return;
         }
         if (h.token.isEmpty()) {
-            Toast.makeText(this, "Havolada kalit yo‘q (#k=... qismi kerak)",
+            Toast.makeText(this, "The link has no key (the #k=... part)",
                     Toast.LENGTH_LONG).show();
             return;
         }
@@ -669,7 +673,7 @@ public class HostsActivity extends Activity {
         open(h);
     }
 
-    /** pult:// yoki https:// havolasi bilan ochilgan bo'lsa. */
+    /** When opened with a pult:// or https:// link. */
     private boolean handleIncomingLink(Intent intent) {
         if (intent == null) return false;
         String action = intent.getAction();
@@ -681,14 +685,14 @@ public class HostsActivity extends Activity {
             return true;
         }
 
-        // "Ulashish" orqali kelgan matn: Telegramdagi xabarda havola
-        // boshqa so'zlar bilan birga bo'ladi, shuning uchun uni
-        // matndan ajratib olamiz.
+        // Text arriving through "Share": in a Telegram message the link
+        // comes surrounded by other words, so it is pulled out of the
+        // text.
         if (Intent.ACTION_SEND.equals(action)) {
             String text = intent.getStringExtra(Intent.EXTRA_TEXT);
             String link = firstLink(text);
             if (link == null) {
-                Toast.makeText(this, "Bu matnda Pult havolasi topilmadi",
+                Toast.makeText(this, "No Pult link found in this text",
                         Toast.LENGTH_LONG).show();
                 return true;
             }
@@ -698,7 +702,7 @@ public class HostsActivity extends Activity {
         return false;
     }
 
-    /** Matndagi birinchi http(s) havolani qaytaradi. */
+    /** Returns the first http(s) link in the text. */
     private static String firstLink(String text) {
         if (text == null) return null;
         for (String word : text.split("\\s+")) {
@@ -709,9 +713,9 @@ public class HostsActivity extends Activity {
         return null;
     }
 
-    // ------------------------------------------------------------ yordamchi
+    // ------------------------------------------------------------ helpers
 
-    /** To'ldirilgan tugma. */
+    /** A filled button. */
     private TextView button(String text, int bg, int fg) {
         TextView b = new TextView(this);
         b.setText(text);
@@ -725,7 +729,7 @@ public class HostsActivity extends Activity {
         return b;
     }
 
-    /** Kichik tugma (banner ichidagi kabi). */
+    /** A small button, as used inside the banner. */
     private TextView pill(String text, int bg, int fg) {
         TextView b = new TextView(this);
         b.setText(text);

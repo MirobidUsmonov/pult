@@ -1,15 +1,15 @@
 """
-APK'ni Gradle'siz yig'adi.
+Builds the APK without Gradle.
 
-Nega: Gradle 130 MB yuklab olishni talab qiladi va sekin ulanishda bu
-yarim soatga cho'ziladi. Android SDK'ning o'zida esa yig'ish uchun kerak
-bo'lgan hamma narsa bor - aapt2, d8, zipalign, apksigner. Ilova kichik
-bo'lgani uchun ularni to'g'ridan-to'g'ri chaqirish mumkin.
+Why: Gradle wants a 130 MB download, which on a slow connection stretches
+to half an hour. The Android SDK already contains everything a build
+needs - aapt2, d8, zipalign, apksigner - and the app is small enough to
+call them directly.
 
-Natija Gradle yig'ganidan farq qilmaydi: xuddi shu APK, xuddi shu
-imzo turi (debug kaliti bilan).
+The result is no different from a Gradle build: the same APK, signed the
+same way (with the debug key).
 
-Ishlatish:
+Usage:
     python scripts/build_apk_direct.py
     python scripts/build_apk_direct.py --tools E:\\dev-tools
 """
@@ -85,8 +85,9 @@ class Tools:
 
 
 def say(text: str) -> None:
-    """Konsolga chiqaradi. Konsol kodlashiga sig'magan belgilar
-    skriptni yiqitmasin - aks holda asl xato ko'rinmay qoladi."""
+    """Prints to the console. Characters the console encoding cannot
+    handle must not bring the script down - otherwise the real error
+    would never be seen."""
     try:
         print(text)
     except UnicodeEncodeError:
@@ -102,28 +103,28 @@ def run(args: list, env: dict | None = None, step: str = "") -> None:
         env=env, creationflags=NO_WINDOW,
     )
     if result.returncode != 0:
-        print(f"\nXATO ({step or 'buyruq'}):")
+        print(f"\nERROR ({step or 'command'}):")
         print(f"  {printable[:400]}")
         for line in (result.stdout or "").splitlines()[-25:]:
             print("  " + line)
         for line in (result.stderr or "").splitlines()[-25:]:
             print("  " + line)
         raise SystemExit(1)
-    # Ogohlantirishlar foydali, lekin ular orasida javac'ning odatiy
-    # "deprecated" shovqini ko'p - faqat muhimlarini ko'rsatamiz
+    # Warnings are useful, but javac's routine "deprecated" noise
+    # drowns them out - only show the ones that matter
     for line in (result.stderr or "").splitlines():
         if "error" in line.lower():
             say("  " + line)
 
 
 def prepare_manifest(build_dir: Path) -> Path:
-    """Manifestga package atributini qo'shib, nusxasini yasaydi.
+    """Copies the manifest with a package attribute added.
 
-    aapt2 bu atributni talab qiladi, Gradle'ning yangi versiyalari esa
-    aksincha - uni manifestda ko'rsa xato beradi va paket nomini
-    build.gradle'dagi namespace'dan oladi. Ikkala yo'l bilan ham
-    yig'ilishi uchun asl manifest tegilmasdan qoladi, nusxasiga esa
-    atribut qo'shiladi.
+    aapt2 requires that attribute, while newer Gradle versions do the
+    opposite - seeing it in the manifest is an error, and they take the
+    package name from the namespace in build.gradle. So that both routes
+    build, the original manifest is left alone and the attribute is
+    added to the copy.
     """
     text = (SRC / "AndroidManifest.xml").read_text(encoding="utf-8")
     if "package=" not in text.split(">", 1)[0]:
@@ -135,11 +136,11 @@ def prepare_manifest(build_dir: Path) -> Path:
 
 
 def write_build_config(gen: Path) -> Path:
-    """BuildConfig.java - odatda Gradle yaratadi.
+    """BuildConfig.java, which Gradle normally generates.
 
-    Ilova undan faqat DEBUG bayrog'ini oladi (nosozlik izlash uchun
-    WebView'ni kompyuter brauzeriga ulash), shuning uchun qo'lda yozish
-    yetarli.
+    The app only takes the DEBUG flag from it (to attach the WebView to
+    a desktop browser for troubleshooting), so writing it by hand is
+    enough.
     """
     pkg_dir = gen / Path(*PACKAGE.split("."))
     pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -158,15 +159,15 @@ def write_build_config(gen: Path) -> Path:
 
 
 def ensure_debug_keystore(tools: Tools, path: Path) -> None:
-    """Imzo kaliti. Android imzosiz APK'ni o'rnatmaydi.
+    """The signing key. Android will not install an unsigned APK.
 
-    Debug kaliti Android'da odatiy: parollari ham hammaga ma'lum. U
-    faqat "bu fayl o'zgartirilmagan" degan kafolat beradi, do'konga
-    chiqarish uchun emas.
+    A debug key is the norm on Android, passwords and all - they are
+    public knowledge. It only guarantees "this file was not modified";
+    it is not meant for release to a store.
     """
     if path.exists():
         return
-    print("  imzo kaliti yasalmoqda...")
+    print("  generating the signing key...")
     path.parent.mkdir(parents=True, exist_ok=True)
     run([
         tools.keytool(), "-genkeypair", "-v",
@@ -188,14 +189,14 @@ def build(tools: Tools, out_dir: Path) -> Path:
     for d in (gen, classes, dex):
         d.mkdir(parents=True, exist_ok=True)
 
-    # 1. Resurslar
-    print("  resurslar kompilyatsiya qilinmoqda...")
+    # 1. Resources
+    print("  compiling resources...")
     res_zip = build_dir / "res.zip"
     run([tools.aapt2(), "compile", "--dir", SRC / "res", "-o", res_zip],
         step="aapt2 compile")
 
-    # 2. Bog'lash: manifest + resurslar -> APK asosi, va R.java
-    print("  resurslar bog'lanmoqda...")
+    # 2. Linking: manifest + resources -> the APK base, and R.java
+    print("  linking resources...")
     base_apk = build_dir / "base.apk"
     manifest = prepare_manifest(build_dir)
     run([
@@ -212,14 +213,15 @@ def build(tools: Tools, out_dir: Path) -> Path:
         res_zip,
     ], step="aapt2 link")
 
-    # 3. Java kodi
-    print("  java kompilyatsiya qilinmoqda...")
+    # 3. The Java code
+    print("  compiling java...")
     write_build_config(gen)
     sources = sorted(str(p) for p in list(gen.rglob("*.java")) + list((SRC / "java").rglob("*.java")))
     run([
         tools.javac(),
-        # release 11: android.jar sinflari classpath'dan olinadi, java.*
-        # esa JDK'ning o'zidan. 11 - Android qo'llab-quvvatlaydigan daraja.
+        # release 11: the android.jar classes come from the classpath
+        # and java.* from the JDK itself. 11 is the level Android
+        # supports.
         "--release", "11",
         "-encoding", "UTF-8",
         "-nowarn",
@@ -228,8 +230,8 @@ def build(tools: Tools, out_dir: Path) -> Path:
         *sources,
     ], step="javac")
 
-    # 4. dex - Android bayt-kodi
-    print("  dex yasalmoqda...")
+    # 4. dex, the Android bytecode
+    print("  generating dex...")
     class_files = sorted(str(p) for p in classes.rglob("*.class"))
     run([
         tools.d8(),
@@ -239,18 +241,18 @@ def build(tools: Tools, out_dir: Path) -> Path:
         *class_files,
     ], step="d8")
 
-    # 5. dex ni APK ichiga qo'shamiz
-    print("  APK yig'ilmoqda...")
+    # 5. Put the dex inside the APK
+    print("  assembling the APK...")
     with zipfile.ZipFile(base_apk, "a", zipfile.ZIP_DEFLATED) as z:
         for d in sorted(dex.glob("*.dex")):
             z.write(d, d.name)
 
-    # 6. Tekislash: Android xotiraga to'g'ridan-to'g'ri joylashi uchun
+    # 6. Alignment, so Android can map it straight into memory
     aligned = build_dir / "aligned.apk"
     run([tools.zipalign(), "-f", "-p", "4", base_apk, aligned], step="zipalign")
 
-    # 7. Imzo
-    print("  imzolanmoqda...")
+    # 7. Signing
+    print("  signing...")
     keystore = tools.root / "debug.keystore"
     ensure_debug_keystore(tools, keystore)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -269,12 +271,6 @@ def build(tools: Tools, out_dir: Path) -> Path:
     return final
 
 
-BIDO_PYTHON = Path(
-    r"C:\Users\Windows 11\mcp\claude-bot-run\.venv-telegram\Scripts\python.exe"
-)
-BIDO_ENV = Path(r"C:\Users\Windows 11\mcp\claude-bot-run\.env")
-
-
 def read_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.is_file():
@@ -288,15 +284,15 @@ def read_env(path: Path) -> dict[str, str]:
 
 
 def bot_credentials() -> tuple[str, str] | None:
-    """Bot tokeni va qabul qiluvchi chat'ni topadi.
+    """Finds the bot token and the receiving chat.
 
-    Avval Pult'ning o'z sozlamasi (python -m pult --telegram bilan
-    qo'yiladi), u bo'sh bo'lsa BIDO yordamchisining .env fayli.
+    They come from Pult's own settings, set up with
+    `python -m pult --telegram`.
 
-    Bot yo'li akkaunt sessiyasidan ko'ra ishonchli: token eskirmaydi va
-    kirish kodi kerak emas. Akkaunt sessiyasi esa Telegram uni bekor
-    qilsa qaytadan kod so'rashni talab qiladi - kod kelmasa hammasi
-    to'xtab qoladi.
+    The bot route is more dependable than an account session: the token
+    does not expire and no login code is needed. An account session
+    demands a fresh code whenever Telegram revokes it - and if the code
+    does not arrive, everything stops.
     """
     sys.path.insert(0, str(ROOT))
     try:
@@ -307,56 +303,24 @@ def bot_credentials() -> tuple[str, str] | None:
             return t.bot_token, str(t.chat_id)
     except Exception:
         pass
-
-    env = read_env(BIDO_ENV)
-    token = env.get("TELEGRAM_BOT_TOKEN", "")
-    # ALLOWED_USERS - vergul bilan ajratilgan ro'yxat, birinchisi egasi
-    chat = env.get("ALLOWED_USERS", "").split(",")[0].strip()
-    if token and chat:
-        return token, chat
     return None
 
 
-def send_to_saved(apk: Path) -> bool:
-    """APK'ni Telegram'dagi Saqlangan xabarlarga yuboradi.
-
-    BIDO yordamchisining akkaunt sessiyasidan foydalanadi - oddiy bot
-    Saqlangan xabarlarga yoza olmaydi, chunki u foydalanuvchining o'z
-    chati.
-
-    Sessiya band yoki eskirgan bo'lsa jimgina o'tkazib yuboriladi:
-    yuborilmagani yig'ishni buzmasligi kerak.
-    """
-    sender = ROOT / "scripts" / "send_to_saved.py"
-    if not BIDO_PYTHON.exists() or not sender.exists():
-        return False
-    result = subprocess.run(
-        [str(BIDO_PYTHON), str(sender), str(apk),
-         f"Pult {VERSION_NAME} — {apk.stat().st_size / 1024:.0f} KB"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-        creationflags=NO_WINDOW,
-    )
-    for line in (result.stdout or "").splitlines():
-        if line.strip():
-            say("  " + line.strip())
-    return result.returncode == 0
-
-
 def send_to_telegram(apk: Path) -> None:
-    """Yig'ilgan APK'ni Telegram'ga yuboradi.
+    """Sends the built APK to Telegram.
 
-    Bot sozlamalari Pult'nikidan olinadi (python -m pult --telegram bilan
-    sozlanadi), shuning uchun alohida sozlash kerak emas.
+    The bot settings come from Pult's own configuration (set up with
+    `python -m pult --telegram`), so nothing else has to be configured.
 
-    Diqqat: bot Telegram'dagi "Saqlangan xabarlar"ga yoza olmaydi - u
-    foydalanuvchining o'z akkaunti chati va botlar unga kira olmaydi.
-    Fayl bot bilan bo'lgan chatga tushadi, u yerdan bir bosishda
-    Saqlanganlarga yuborish mumkin.
+    Note: a bot cannot write to Telegram's "Saved Messages" - that is the
+    user's own account chat and bots have no access to it. The file lands
+    in the chat with the bot, from where one tap forwards it to Saved
+    Messages.
     """
     creds = bot_credentials()
     if creds is None:
-        say("  Telegram sozlanmagan - o'tkazib yuborildi")
-        say("  Sozlash uchun:  python -m pult --telegram <BOT_TOKEN>")
+        say("  Telegram is not set up - skipped")
+        say("  To set it up:  python -m pult --telegram <BOT_TOKEN>")
         return
     bot_token, chat_id = creds
 
@@ -390,59 +354,57 @@ def send_to_telegram(apk: Path) -> None:
     try:
         with urllib.request.urlopen(req, timeout=180) as response:
             ok = b'"ok":true' in response.read()
-        say("  Telegram: yuborildi" if ok else "  Telegram: qabul qilinmadi")
+        say("  Telegram: sent" if ok else "  Telegram: not accepted")
     except Exception as exc:
-        # Yuborilmagani yig'ishni buzmasligi kerak
-        say(f"  Telegram: yuborilmadi ({exc})")
+        # A failed send must not break the build
+        say(f"  Telegram: not sent ({exc})")
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Pult APK - Gradle'siz yig'ish")
-    ap.add_argument("--tools", default="E:\\dev-tools", help="asboblar papkasi")
-    ap.add_argument("--out", default=str(PROJECT / "dist"), help="natija papkasi")
+    ap = argparse.ArgumentParser(description="Pult APK - a build without Gradle")
+    ap.add_argument("--tools", default="E:\\dev-tools", help="the toolchain folder")
+    ap.add_argument("--out", default=str(PROJECT / "dist"), help="the output folder")
     ap.add_argument("--telegram", action="store_true",
-                    help="yig'ilgach APK'ni Telegram'ga yuborish")
+                    help="send the APK to Telegram once it is built")
     ap.add_argument("--desktop", action="store_true",
-                    help="yig'ilgach ish stoliga nusxalash")
+                    help="copy it to the desktop once it is built")
     args = ap.parse_args()
 
     tools = Tools(Path(args.tools))
 
-    # d8, apksigner va boshqa .bat fayllar java'ni PATH yoki JAVA_HOME
-    # orqali qidiradi. Ko'chma o'rnatishda ular tizimda yo'q, shuning
-    # uchun muhitni shu yerda sozlaymiz - bola jarayonlar meros oladi.
+    # d8, apksigner and the other .bat files look for java on PATH or
+    # through JAVA_HOME. In a portable install neither is set on the
+    # system, so the environment is set up here - child processes
+    # inherit it.
     os.environ["JAVA_HOME"] = str(tools.jdk)
     os.environ["PATH"] = str(tools.jdk / "bin") + os.pathsep + os.environ.get("PATH", "")
 
     missing = tools.check()
     if missing:
-        print("Kerakli asboblar topilmadi:")
+        print("Required tools not found:")
         for m in missing:
             print("  " + m)
-        print("\nAvval: powershell -File scripts\\android_toolchain.ps1")
+        print("\nRun first: powershell -File scripts\\android_toolchain.ps1")
         return 2
 
-    print("Pult APK yig'ilmoqda (Gradle'siz)")
+    print("Building the Pult APK (without Gradle)")
     apk = build(tools, Path(args.out))
     size = apk.stat().st_size / 1024 / 1024
     print()
-    print(f"Tayyor: {apk}")
-    print(f"Hajmi:  {size:.1f} MB")
+    print(f"Ready: {apk}")
+    print(f"Size:  {size:.1f} MB")
 
     if args.desktop:
         try:
             desktop = Path.home() / "Desktop"
             if desktop.is_dir():
                 shutil.copy2(apk, desktop / apk.name)
-                say(f"  Ish stoliga nusxalandi: {desktop / apk.name}")
+                say(f"  Copied to the desktop: {desktop / apk.name}")
         except Exception as e:
-            say(f"  Ish stoliga nusxalanmadi ({e})")
+            say(f"  Not copied to the desktop ({e})")
 
     if args.telegram:
-        # Avval Saqlangan xabarlarga urinamiz (akkaunt sessiyasi orqali),
-        # bo'lmasa bot chatiga tushadi.
-        if not send_to_saved(apk):
-            send_to_telegram(apk)
+        send_to_telegram(apk)
     return 0
 
 

@@ -1,9 +1,8 @@
 """
-Sozlamalar: yuklash, saqlash, birinchi ishga tushirishda yaratish.
+Settings: loading, saving, creating them on first run.
 
-Sozlama fayli foydalanuvchi papkasida turadi, dastur papkasida emas -
-shunda dasturni yangilash yoki boshqa joyga ko'chirish sozlamalarni
-yo'qotmaydi.
+The settings file lives in the user's folder rather than next to the
+program, so updating or moving the program does not lose them.
 """
 from __future__ import annotations
 
@@ -20,26 +19,28 @@ from typing import Any, get_type_hints
 
 
 def program_dir() -> Path:
-    """Dastur joylashgan papka (.exe bo'lsa uning yonidagi)."""
+    """The folder the program lives in (next to the .exe when frozen)."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).resolve().parents[1]
 
 
 def config_dir() -> Path:
-    """Sozlamalar papkasi.
+    """The settings folder.
 
-    Uchta yo'l, shu tartibda:
+    Three paths, in this order:
 
-    1. PULT_CONFIG_DIR muhit o'zgaruvchisi - testlar va maxsus holatlar uchun.
-    2. Dastur yonidagi "data" papkasi, agar u mavjud bo'lsa - "ko'chma rejim".
-       Uni qo'lda yaratasiz va dastur o'sha yerga yozadi. USB'dan ishlatish
-       uchun qulay, lekin asosiy foydasi boshqa: dastur turli usullar bilan
-       (terminaldan, vazifa rejalashtiruvchisidan, boshqa dastur ichidan)
-       ishga tushirilganda ham bitta joyni ko'radi. Ba'zi muhitlarda
-       AppData boshqa papkaga yo'naltiriladi va shunda ikkita alohida
-       sozlama paydo bo'lib, kalitlar mos kelmay qoladi.
-    3. Tizimning odatiy joyi.
+    1. The PULT_CONFIG_DIR environment variable - for tests and special
+       cases.
+    2. A "data" folder next to the program, if it exists - "portable
+       mode". You create it by hand and the program writes there.
+       Handy for running from a USB stick, but the real benefit is a
+       different one: however the program is started (from a terminal,
+       from the task scheduler, from inside another program) it sees a
+       single place. In some environments AppData is redirected
+       elsewhere, and then two separate settings files appear and the
+       keys stop matching.
+    3. The system's default location.
     """
     override = os.environ.get("PULT_CONFIG_DIR")
     if override:
@@ -71,29 +72,29 @@ def log_path() -> Path:
 class StreamSettings:
     monitor: int = 0
     fps: int = 30
-    width: int = 1280          # 0 = ekranning o'z kengligi
+    width: int = 1280          # 0 = the screen's own width
     bitrate_kbps: int = 4000
     cursor: bool = True
-    encoder: str | None = None  # None = avtomatik
-    # Ekran raqamini ekran olish manbasiga bog'lash. Bo'sh bo'lsa
-    # to'g'ridan-to'g'ri (0->0, 1->1). Videokarta chiqishlarining tartibi
-    # tizim ro'yxatiga mos kelmasa, foydalanuvchi buni ilovadan
-    # almashtira oladi.
+    encoder: str | None = None  # None = pick automatically
+    # Maps a screen number onto a capture source. Empty means straight
+    # through (0->0, 1->1). When the order of the graphics card's
+    # outputs does not match the system list, the user can swap this
+    # from the app.
     monitor_map: list[int] = field(default_factory=list)
-    # Kursor ekranlar orasida erkin yursinmi. Yoqilgan bo'lsa kursor
-    # boshqa ekranga o'tganda ko'rinish ham o'sha ekranga ko'chadi -
-    # shunda kursor doim ko'rinib turadi. O'chirilgan bo'lsa kursor
-    # ko'rilayotgan ekrandan chiqmaydi.
+    # Whether the cursor may roam between screens. When on, moving the
+    # cursor to another screen moves the view there too, so the cursor
+    # always stays visible. When off, the cursor cannot leave the
+    # screen being watched.
     follow_cursor: bool = True
 
 
 @dataclass
 class HubSettings:
-    """Hub - ixtiyoriy oraliq server.
+    """Hub - an optional relay server.
 
-    Yoqilgan bo'lsa, kompyuter hubga o'zi chiqib ulanadi va telefon
-    hub orqali unga yetadi. Bu ikki tomonda ham oq IP kerak emasligini
-    anglatadi. O'chirilgan bo'lsa - to'g'ridan-to'g'ri ulanish.
+    When enabled, the computer dials out to the hub and the phone
+    reaches it through the hub, so neither side needs a public IP.
+    When disabled, the connection is direct.
     """
     enabled: bool = False
     url: str = ""
@@ -102,47 +103,46 @@ class HubSettings:
 
 @dataclass
 class RemoteSettings:
-    """Tashqi kirish - bitta Wi-Fi chegarasidan chiqish uchun.
+    """Remote access - for getting past the edge of one Wi-Fi.
 
-    Uy routerida port ochish ko'pchilikda ishlamaydi: operatorlar oq IP
-    bermaydi (CGNAT). Shuning uchun kompyuterning o'zi tashqariga
-    chiqib tunnel ochadi - bu har qanday tarmoqda ishlaydi.
+    Opening a port on a home router does not work for most people:
+    carriers hand out addresses behind CGNAT, so there is nothing to
+    forward to. Instead the computer dials outward and holds a tunnel
+    open, which works on any network.
 
-    "off"        - faqat mahalliy tarmoq.
-    "cloudflare" - cloudflared tezkor tunneli. Hisob ham, domen ham
-                   kerak emas, sertifikat haqiqiy (brauzer
-                   ogohlantirmaydi). Kamchiligi: manzil har safar
-                   yangi bo'ladi, shuning uchun u Telegram orqali
-                   yuboriladi.
+    "off"        - local network only.
+    "cloudflare" - a cloudflared quick tunnel. Needs no account and no
+                   domain, and the certificate is real, so the browser
+                   stops warning. The catch: the address is new on
+                   every start, which is why it is delivered over
+                   Telegram.
     """
     mode: str = "off"
-    # cloudflared fayli. Bo'sh bo'lsa dastur uni tizimdan qidiradi,
-    # topmasa o'zi yuklab oladi.
+    # The cloudflared binary. When empty the program looks for it on the
+    # system and downloads it if it is missing.
     binary: str = ""
 
 
 @dataclass
 class UpdateSettings:
-    """O'z-o'zini yangilash.
+    """Updating itself.
 
-    Maqsad: yangi versiya chiqqanda hech narsa qilish kerak bo'lmasin.
-    Dastur ishga tushganda manbani tekshiradi va yangisi bo'lsa o'zini
-    almashtirib qayta ishga tushadi.
+    The point is that a new version should require nothing from the
+    user. On startup the program checks the source and, if it differs,
+    replaces itself and restarts.
 
-    "off"    - yangilanmaydi.
-    "folder" - source papkasidagi Pult.exe bilan solishtiradi. Papka
-               mahalliy ham, tarmoqdagi umumiy papka ham bo'lishi
-               mumkin.
-    "url"    - source manzilidan yuklab oladi.
+    "off"    - no updates.
+    "folder" - compares against Pult.exe in the source folder, which may
+               be local or a network share.
+    "url"    - downloads from the source address.
 
-    Solishtirish fayl xesh yig'indisi bo'yicha: raqamli versiya
-    yuritish shart emas, manbadagi fayl boshqacha bo'lsa - o'shanga
-    o'tiladi.
+    The comparison is by file hash: there are no version numbers to
+    maintain, and whatever the source holds is what gets used.
     """
     mode: str = "off"
     source: str = ""
-    # Ishlab turganda ham tekshiradi. Yangilash faqat hech kim
-    # ulanmagan paytda qo'llanadi - oqim o'rtasida uzilmasin.
+    # Also checked while running. An update is only applied when nobody
+    # is connected, so a live stream is never cut short.
     check_minutes: int = 15
 
 
@@ -151,13 +151,13 @@ class TelegramSettings:
     enabled: bool = False
     bot_token: str = ""
     chat_id: str = ""
-    on_start: bool = True       # kompyuter yonganda xabar berish
+    on_start: bool = True       # notify when the computer comes online
 
 
 @dataclass
 class SecuritySettings:
-    # Tizim buyruqlari (uxlatish, o'chirish, dastur ochish) ruxsat etilganmi.
-    # Faqat kuzatish uchun ishlatmoqchi bo'lganlar buni o'chirib qo'yishi mumkin.
+    # Whether system commands (sleep, shut down, launch a program) are
+    # allowed. Anyone who only wants to watch can turn this off.
     allow_commands: bool = True
     allow_input: bool = True
 
@@ -169,17 +169,18 @@ class Config:
     token: str = ""
     bind: str = "0.0.0.0"
     port: int = 8787
-    # Kompyuterning o'zi uchun HTTP porti (faqat 127.0.0.1). 0 bo'lsa
-    # port + 1 ishlatiladi. Bu yerda sertifikat kerak emas, shuning
-    # uchun kompyuterda oyna ogohlantirishsiz ochiladi.
+    # HTTP port for the computer itself, bound to 127.0.0.1 only.
+    # 0 means port + 1. No certificate is needed here, so the window
+    # opens on the computer without any warning.
     local_port: int = 0
-    # "auto" - o'z-o'zini imzolagan sertifikat bilan HTTPS (telefon uchun shart:
-    # brauzer video dekodlashni faqat xavfsiz kontekstda beradi).
-    # "off"  - oddiy HTTP. Faqat oldida HTTPS beruvchi tunnel yoki proksi
-    #          turgan bo'lsa ishlating.
+    # "auto" - HTTPS with a self-signed certificate. Required for the
+    #          phone: browsers only grant video decoding in a secure
+    #          context.
+    # "off"  - plain HTTP. Only use it behind a tunnel or proxy that
+    #          terminates HTTPS in front.
     tls: str = "auto"
-    # Tashqi manzil (tunnel bergan). Berilgan bo'lsa xabarnomalarda va
-    # ulash sahifasida mahalliy IP o'rniga shu ishlatiladi.
+    # The public address the tunnel handed out. When set, it is used in
+    # notifications and on the pairing page instead of the local IP.
     public_url: str = ""
     ffmpeg_path: str | None = None
     stream: StreamSettings = field(default_factory=StreamSettings)
@@ -194,14 +195,14 @@ class Config:
 
 
 def _fill(cls, data: dict) -> Any:
-    """dict'ni dataclass'ga aylantiradi, notanish kalitlarni e'tiborsiz qoldiradi.
+    """Turns a dict into a dataclass, ignoring keys it does not know.
 
-    Notanish kalitlarni tashlab yuborish ataylab: eski versiyada yozilgan
-    sozlama fayli yangi dasturni ishga tushirishga xalaqit bermasligi kerak.
+    Dropping unknown keys is deliberate: a settings file written by an
+    older version must not stop the new program from starting.
 
-    get_type_hints kerak, chunki fayl boshida "from __future__ import
-    annotations" turgani uchun f.type oddiy satr bo'lib keladi va uni
-    to'g'ridan-to'g'ri dataclass sifatida tekshirib bo'lmaydi.
+    get_type_hints is needed because "from __future__ import
+    annotations" at the top of the file makes f.type a plain string,
+    which cannot be checked as a dataclass directly.
     """
     try:
         hints = get_type_hints(cls)
@@ -224,7 +225,7 @@ def default_host_name() -> str:
     try:
         return socket.gethostname()
     except Exception:
-        return "kompyuter"
+        return "computer"
 
 
 def load(path: Path | None = None) -> Config:
@@ -235,10 +236,10 @@ def load(path: Path | None = None) -> Config:
             data = json.loads(path.read_text(encoding="utf-8"))
             cfg = _fill(Config, data)
         except Exception:
-            # Buzilgan sozlama fayli dasturni ishga tushirmay qo'ymasligi kerak:
-            # zaxira nusxa qoldirib, yangisidan boshlaymiz.
+            # A corrupted settings file must not stop the program from
+            # starting: keep a backup and start over from defaults.
             try:
-                path.rename(path.with_suffix(".json.buzilgan"))
+                path.rename(path.with_suffix(".json.broken"))
             except Exception:
                 pass
             cfg = Config()
@@ -272,11 +273,11 @@ def save(cfg: Config, path: Path | None = None) -> None:
 
 
 def local_addresses(port: int, scheme: str = "https") -> list[str]:
-    """Telefondan kirish uchun mahalliy manzillar ro'yxati.
+    """Addresses the phone can reach this computer on.
 
-    Chiqish yo'nalishidagi manzilni ham so'raymiz: bu usul gethostbyname'dan
-    ishonchliroq, chunki VPN yoki bir nechta tarmoq kartasi bo'lganda ham
-    telefon haqiqatda ko'radigan manzilni topadi.
+    The address on the route out is asked for as well: that is more
+    reliable than gethostbyname, because with a VPN or several network
+    cards it still finds the address the phone actually sees.
     """
     addrs: list[str] = []
     try:

@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Kiritish xizmatining sozlamasi.
+  The input service's configuration.
 
-  canPerformGestures - eng muhimi: usiz bosish va surish yubora olmaymiz.
-  Hodisalarga obuna bo'lmaymiz (typeNone bo'lmasa ham, biz ularni
-  qayta ishlamaymiz) - ilova faqat imo-ishora yuborish uchun ishlatiladi,
-  ekrandagi ma'lumotni o'qimaydi.
+  canPerformGestures is the important one: without it we cannot send
+  taps or swipes. We do not act on events (the type is not typeNone, but
+  we never process them) - the app is only used to send gestures, it
+  does not read what is on the screen.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged"

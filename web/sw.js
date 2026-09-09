@@ -1,9 +1,9 @@
 /*
- * Xizmat ishchisi (service worker).
+ * The service worker.
  *
- * Vazifasi faqat bitta: ilova telefon ekranidan ochilganda darhol
- * ko'rinsin. Tarmoq birinchi, kesh ikkinchi - shunda dastur yangilansa
- * telefon eski nusxada qolib ketmaydi.
+ * It has exactly one job: make the app appear at once when it is opened
+ * from the phone's home screen. Network first, cache second, so an
+ * updated program never leaves the phone on an old copy.
  */
 const CACHE = "pult-v1";
 const SHELL = [
@@ -31,7 +31,7 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
-  // WebSocket va API so'rovlariga umuman aralashmaymiz
+  // Never get in the way of WebSocket and API requests
   if (e.request.method !== "GET" || url.pathname.startsWith("/ws") || url.pathname.startsWith("/api")) {
     return;
   }

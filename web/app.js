@@ -1,9 +1,9 @@
 /*
- * Pult - telefon tarafi.
+ * Pult - the phone side.
  *
- * Video WebCodecs orqali ochiladi: kompyuterdan kelgan H.264 kadrlari
- * to'g'ridan-to'g'ri telefonning apparat dekoderiga beriladi. Shu sababli
- * kechikish past va batareya kam yeyiladi.
+ * Video is decoded through WebCodecs: the H.264 frames from the computer
+ * go straight to the phone's hardware decoder. That is what keeps
+ * latency low and battery use small.
  */
 
 const $ = (id) => document.getElementById(id);
@@ -12,35 +12,34 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const KEY_STORE = "pult.key";
 const PREF_STORE = "pult.prefs";
 
-/* Havoladagi "view=phone" - ulangan telefonni o'zi tanlash so'rovi.
- * Kompyuter treyidagi "Telefon ekranini ko'rish" shu belgi bilan ochadi.
- * readToken() manzil qatorini tozalagani uchun bu qiymat undan OLDIN
- * o'qilishi shart. */
+/* "view=phone" in the link asks for the connected phone to be picked
+ * automatically. "Watch the phone screen" in the computer's tray opens
+ * it with that marker. readToken() cleans the address bar, so this
+ * value has to be read BEFORE it runs. */
 const wantView = (location.hash.match(/[#&]view=([^&]+)/) || [])[1] || "";
 
-/* Sahifa telefonda ham, kompyuter brauzerida ham ochiladi. Kompyuterda
- * boshqacha ko'rinish kerak: barmoq imo-ishoralari o'rniga sichqoncha,
- * ekrandagi tugmalar qatori o'rniga haqiqiy klaviatura.
+/* The page opens both on a phone and in a desktop browser. On a
+ * computer it needs a different shape: a mouse instead of finger
+ * gestures, a real keyboard instead of the on-screen key row.
  *
- * Ko'rinish CSS'dagi @media orqali o'zgaradi, bu yerda esa faqat
- * xatti-harakat uchun so'rov saqlanadi. Muhimi: qiymat OLDINDAN
- * hisoblanmaydi. Sahifa yuklanayotganda oyna o'lchami hali noto'g'ri
- * bo'lishi mumkin va bir marta hisoblangan qiymat shu xato bilan
- * qotib qolardi. */
+ * The look is switched by @media in the CSS; only the query for
+ * behaviour is kept here. The important part: the value is NOT computed
+ * up front. While the page is loading the window size can still be
+ * wrong, and a value computed once would stick with that mistake. */
 const deskQuery = matchMedia("(pointer: fine) and (min-width: 700px)");
 
-/* ---------------------------------------------------------------- kalit */
+/* ------------------------------------------------------------------ key */
 
 function readToken() {
   const m = location.hash.match(/[#&]k=([^&]+)/);
   if (m) {
     const t = decodeURIComponent(m[1]);
     localStorage.setItem(KEY_STORE, t);
-    // Kalitni manzil qatorida qoldirmaymiz: brauzer tarixida va ekran
-    // suratlarida ko'rinib qolmasligi uchun. Faqat kalit olib
-    // tashlanadi - qolgan belgilar (masalan view=phone) sir emas va
-    // saqlanishi shart, aks holda sahifa yangilanganda so'rov
-    // yo'qolib, ko'rinish boshqa manbaga qaytib ketardi.
+    // The key does not stay in the address bar: it must not turn up in
+    // browser history or in screenshots. Only the key is stripped - the
+    // rest of the markers (view=phone, for one) are not secret and have
+    // to survive, otherwise a page refresh would lose the request and
+    // the view would fall back to another source.
     const rest = location.hash.replace(/^#/, "").split("&")
       .filter((p) => p && !p.startsWith("k="));
     history.replaceState(
@@ -59,7 +58,7 @@ const prefs = Object.assign(
 );
 const savePrefs = () => localStorage.setItem(PREF_STORE, JSON.stringify(prefs));
 
-/* -------------------------------------------------------------- dekoder */
+/* -------------------------------------------------------------- decoder */
 
 class Decoder {
   constructor(canvas) {
@@ -107,23 +106,23 @@ class Decoder {
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
       this.canvas.height = h;
-      // Video o'lchami o'zgardi - joylashuvni qayta hisoblash kerak
+      // The video size changed - the layout has to be recomputed
       if (this.onResize) this.onResize(w, h);
     }
     this.ctx.drawImage(frame, 0, 0);
     frame.close();
     this.frames++;
-    // Har kadrda xabar qildiramiz, faqat birinchisida emas: oqim qayta
-    // boshlanganda (ilovaga qaytilganda, sifat o'zgarganda) "Ekran
-    // kutilmoqda" yozuvi qayta chiqadi va uni yana yashirish kerak.
+    // Reported on every frame, not only the first: when the stream
+    // restarts (coming back to the app, changing quality) the "Waiting
+    // for the screen" text appears again and has to be hidden again.
     if (this.onFrame) this.onFrame();
     if (this.frames === 1 && this.onFirstFrame) this.onFirstFrame();
   }
 
   fail(err) {
-    console.warn("dekoder xatosi:", err);
-    // Dekoderni qayta yig'amiz va keyingi kalit kadrni kutamiz - shunda
-    // bitta buzilgan kadr butun oqimni to'xtatib qo'ymaydi.
+    console.warn("decoder error:", err);
+    // Rebuild the decoder and wait for the next key frame, so a single
+    // corrupt frame cannot stop the whole stream.
     const codec = this.codec;
     this.close();
     if (codec) this.configure(codec);
@@ -152,7 +151,7 @@ class Decoder {
   }
 }
 
-/* --------------------------------------------------------------- ulanish */
+/* ------------------------------------------------------------ connection */
 
 class Link {
   constructor(token) {
@@ -205,8 +204,8 @@ class Link {
       clearInterval(this._pingTimer);
       if (ev.code === 1008 || ev.code === 4401) { this.onState("nokey"); return; }
       this.onState("closed");
-      // Sekin ortib boruvchi kutish: tarmoq yo'q bo'lsa telefonni
-      // uzluksiz urinish bilan qizdirmaymiz.
+      // A slowly growing wait: with no network, do not cook the phone
+      // with non-stop retries.
       const wait = Math.min(1000 * 2 ** this.retry++, 15000);
       setTimeout(() => this.connect(), wait);
     };
@@ -225,7 +224,7 @@ function deviceName() {
   const ua = navigator.userAgent;
   if (/Android/i.test(ua)) return "Android";
   if (/iPhone|iPad/i.test(ua)) return "iPhone";
-  return "Brauzer";
+  return "Browser";
 }
 
 /* ------------------------------------------------------------------ UI */
@@ -237,30 +236,30 @@ const link = new Link(readToken());
 
 let host = null;
 let streaming = false;
-// Serverda hozir qaysi ekran ko'rsatilayotgani. Kursor ekranlar orasida
-// yurganda server buni o'zi o'zgartiradi, shuning uchun sozlamalardagi
-// tanlovga emas, serverning javobiga ishonamiz.
+// Which screen the server is showing right now. The server changes this
+// itself when the cursor moves between screens, so we trust its answer
+// rather than the choice stored in the settings.
 let currentMonitor = 0;
-// Hozir qaysi manba ko'rilyapti: "local" - kompyuterning o'zi, yoki
-// ulangan telefonning raqami.
+// Which source is being watched: "local" is the computer itself, or the
+// id of a connected phone.
 let currentSource = "local";
 let sources = [];
 /*
- * Ko'rinish holati.
+ * The view state.
  *
- * Kanvas o'lchami va joyi CSS'ga emas, shu yerdagi hisobga bo'ysunadi.
- * Sababi burish: burilgan elementning getBoundingClientRect() natijasi
- * uning tashqi to'rtburchagini beradi va bosish koordinatalarini
- * hisoblashga yaramaydi. Shuning uchun o'lcham va burchakni o'zimiz
- * saqlab, koordinatani teskari hisoblaymiz.
+ * The canvas size and position follow this bookkeeping, not the CSS.
+ * The reason is rotation: getBoundingClientRect() on a rotated element
+ * returns its outer bounding box, which is useless for working out
+ * click coordinates. So we keep the size and the angle ourselves and
+ * invert the transform by hand.
  */
 const view = {
-  rot: 0,          // 0 yoki 90 daraja
-  auto: true,      // telefon tik turganda o'zi bursin
+  rot: 0,          // 0 or 90 degrees
+  auto: true,      // rotate by itself when the phone is upright
   zoom: 1,
   panX: 0,
   panY: 0,
-  k: 1,            // videoning ekrandagi haqiqiy masshtabi
+  k: 1,            // the video's real scale on screen
 };
 
 function toast(text, ms = 1800) {
@@ -278,8 +277,8 @@ function setPlaceholder(text, button) {
   $("phText").textContent = text;
   $("phBtn").hidden = !button;
   if (button) $("phBtn").textContent = button;
-  // QR faqat "telefon kutilmoqda" holatida ko'rinadi - boshqa
-  // xabarlar (ulanmoqda, uzildi) uni ko'rsatmasin
+  // The QR code only belongs to the "waiting for a phone" state - other
+  // messages (connecting, dropped) must not show it
   $("pairBox").hidden = true;
 }
 
@@ -290,19 +289,19 @@ function setDot(cls, label) {
 
 link.onState = (state) => {
   if (state === "open") {
-    setDot("on", "ulangan");
+    setDot("on", "connected");
   } else if (state === "nokey") {
-    setDot("off", "kalit yo‘q");
+    setDot("off", "no key");
     setPlaceholder(
-      "Kalit topilmadi. Kompyuterdagi Pult bergan havolani to‘liq oching " +
-      "(havola oxirida #k=… bo‘lishi kerak).",
+      "No key found. Open the full link that Pult gave you on the " +
+      "computer (it has to end with #k=…).",
       null
     );
   } else if (state === "closed") {
-    setDot("off", "uzildi");
-    setPlaceholder("Aloqa uzildi. Qayta ulanmoqda…", null);
+    setDot("off", "dropped");
+    setPlaceholder("The connection dropped. Reconnecting…", null);
   } else {
-    setDot("warn", state === "reconnecting" ? "qayta ulanmoqda" : "ulanmoqda");
+    setDot("warn", state === "reconnecting" ? "reconnecting" : "connecting");
   }
 };
 
@@ -317,8 +316,8 @@ link.onJson = (msg) => {
     if (msg.stream && typeof msg.stream.follow_cursor === "boolean") {
       $("chkFollow").checked = msg.stream.follow_cursor;
     }
-    // Telefonni so'ragan bo'lsak - oqim boshlanishidan oldin tanlaymiz,
-    // shunda kompyuter ekrani bekorga bir marta yoqilmaydi.
+    // If a phone was asked for, pick it before the stream starts, so
+    // the computer screen is not turned on once for nothing.
     autoPickSource(true);
     buildMonitors(host.monitors);
     buildMonbar();
@@ -329,15 +328,16 @@ link.onJson = (msg) => {
     applyPrefsToUi();
     if (!decoder.supported) {
       setPlaceholder(
-        "Bu brauzer video dekodlashni (WebCodecs) qo‘llab-quvvatlamaydi. " +
-        "Android’da Chrome, iPhone’da iOS 17+ Safari kerak.",
+        "This browser does not support video decoding (WebCodecs). " +
+        "Use Chrome on Android, or Safari on iOS 17+.",
         null
       );
       return;
     }
-    // Telefon so'ralgan, lekin hali ulanmagan - kutamiz. Kompyuter
-    // ekranini yoqish bu yerda zararli: sahifa kompyuterning o'zida
-    // ochilgani uchun ekran o'zini o'zi cheksiz aks ettiradi.
+    // A phone was asked for but has not connected yet, so we wait.
+    // Turning the computer screen on here would be harmful: the page is
+    // open on that same computer, so the screen would mirror itself
+    // endlessly.
     if (wantView === "phone" && !autoPicked) {
       updateWaiting();
       return;
@@ -353,30 +353,30 @@ link.onJson = (msg) => {
       resetView();
     }
     $("infoEnc").textContent = msg.encoder || "—";
-    $("infoSize").textContent = `${msg.w}×${msg.h} · ${msg.fps} k/s`;
+    $("infoSize").textContent = `${msg.w}×${msg.h} · ${msg.fps} fps`;
     if (msg.codec) decoder.configure(msg.codec);
   } else if (msg.t === "stats") {
-    // Oqim yo'q bo'lsa raqamlarni ko'rsatmaymiz: server oxirgi
-    // qiymatlarni yuborishda davom etadi va ular ekranda "ishlayapti"
-    // degan yolg'on taassurot qoldirardi.
+    // With no stream, show no numbers: the server keeps sending the
+    // last values and they left a false impression that something was
+    // still running.
     $("stats").textContent = streaming
-      ? `${msg.fps} k/s · ${fmtRate(msg.kbps)}` : "";
+      ? `${msg.fps} fps · ${fmtRate(msg.kbps)}` : "";
     $("infoRtt").textContent = link.rtt ? `${link.rtt} ms` : "—";
   } else if (msg.t === "error") {
     toast(msg.msg);
   } else if (msg.t === "cmd_ok") {
-    toast(msg.result || "bajarildi");
+    toast(msg.result || "done");
   } else if (msg.t === "monitor_map") {
-    toast("Ekranlar almashtirildi");
+    toast("The screens were swapped");
   } else if (msg.t === "sources") {
     sources = msg.list || [];
     buildSources();
     autoPickSource(false);
     updateWaiting();
   } else if (msg.t === "source_gone") {
-    toast("Manba uzildi");
+    toast("The source dropped");
     currentSource = "local";
-    // Yana telefon ulansa o'zi qaytib tanlansin
+    // Let it be picked again by itself if a phone reconnects
     autoPicked = false;
     buildSources();
     buildToolMid();
@@ -389,8 +389,8 @@ link.onJson = (msg) => {
 link.onVideo = (data, isKey) => decoder.push(data, isKey);
 
 decoder.onFrame = () => {
-  // hidden allaqachon true bo'lsa bu hech narsa qilmaydi, shuning uchun
-  // har kadrda chaqirish arzon.
+  // When hidden is already true this does nothing, so calling it on
+  // every frame is cheap.
   setPlaceholder(null);
 };
 
@@ -404,9 +404,9 @@ decoder.onResize = () => {
   applyView();
 };
 
-// Ekran burilganda yoki oyna o'lchami o'zgarganda qayta hisoblaymiz.
-// orientationchange dan keyin brauzer o'lchamlarni darrov yangilamaydi,
-// shuning uchun kichik kechikish bilan takrorlaymiz.
+// Recompute when the screen rotates or the window is resized. After
+// orientationchange the browser does not update the sizes immediately,
+// so we repeat it after a short delay.
 function refreshView() {
   autoRotate();
   applyView();
@@ -430,13 +430,13 @@ function fmtRate(kbps) {
 
 function startStream() {
   streaming = true;
-  setPlaceholder("Ekran kutilmoqda…");
+  setPlaceholder("Waiting for the screen…");
   link.send({
     t: "view", on: true,
     source: currentSource,
-    // Serverdagi joriy ekran: kursor ekranlar orasida yurgan bo'lsa
-    // server allaqachon boshqasiga o'tgan bo'lishi mumkin, uni
-    // eski tanlovga majburan qaytarmaymiz.
+    // The server's current screen: if the cursor has moved between
+    // screens the server may already be on another one, and we do not
+    // force it back to the old choice.
     monitor: currentMonitor,
     fps: prefs.fps, width: prefs.width,
     bitrate: prefs.bitrate, cursor: prefs.cursor,
@@ -448,23 +448,23 @@ function stopStream() {
   link.send({ t: "view", on: false });
 }
 
-/* ---------------------------------------------------------- kiritish */
+/* -------------------------------------------------------------- input */
 
 let lastMoveSent = 0;
 function sendMove(x, y) {
   const now = performance.now();
-  if (now - lastMoveSent < 12) return;   // ~80/s dan tez yubormaymiz
+  if (now - lastMoveSent < 12) return;   // no faster than ~80/s
   lastMoveSent = now;
   link.send({ t: "mouse", a: "move", x, y });
 }
 
-/** Ekrandagi nuqtani video ichidagi nisbiy o'ringa (0..1) o'giradi. */
+/** Turns a point on screen into a relative position (0..1) in the video. */
 function pointToNorm(cx, cy) {
   const vw = canvas.width, vh = canvas.height;
   const r = stage.getBoundingClientRect();
-  // Kanvas hali chizilmagan bo'lsa (birinchi kadr kelmagan, ilova fonda,
-  // ekran burilayotgan payt) o'lcham nol bo'ladi. Nolga bo'lish NaN
-  // beradi va serverga yaroqsiz koordinata ketardi.
+  // While the canvas has not been drawn yet (no first frame, app in the
+  // background, screen mid-rotation) the size is zero. Dividing by zero
+  // gives NaN, and an invalid coordinate would go to the server.
   if (!vw || !vh || !view.k || r.width < 1 || r.height < 1) return null;
 
   const dx = cx - (r.left + r.width / 2) - view.panX;
@@ -475,24 +475,24 @@ function pointToNorm(cx, cy) {
   return {
     x: clamp(x, 0, 1),
     y: clamp(y, 0, 1),
-    // Xom qiymat: 0..1 dan tashqarida bo'lsa barmoq videoning o'zida
-    // emas, yon-veridagi qora chekkada. Qirqilmagani kerak, chunki
-    // chekka atigi bir necha piksel bo'lishi mumkin.
+    // The raw value: outside 0..1 the finger is not on the video itself
+    // but in the black margin beside it. It must stay unclamped,
+    // because the margin can be only a few pixels wide.
     rx: x,
     ry: y,
-    // Bosish uchun kichik tolerans qoldiramiz: chekkaga bir-ikki
-    // piksel chiqib ketgan tegish bekor ketmasin.
+    // A small tolerance for clicks: a touch that lands a pixel or two
+    // past the edge should not be thrown away.
     inside: x >= -0.02 && x <= 1.02 && y >= -0.02 && y <= 1.02,
-    // Ekran almashtirgich uchun esa aniq chegara kerak.
+    // The screen switcher, though, needs an exact boundary.
     outside: x < 0 || x > 1 || y < 0 || y > 1,
   };
 }
 
-/** Ekran yo'nalishini videoning o'z yo'nalishiga o'giradi.
+/** Maps a screen direction into the video's own direction.
  *
- * 90  - soat yo'nalishi bo'yicha: videoning tepasi ekranning o'ng chetiga
- *       tushadi (telefonni chapga burib qaraladi).
- * 270 - teskari tomonga.
+ * 90  - clockwise: the top of the video lands on the right edge of the
+ *       screen (the phone is turned left to watch).
+ * 270 - the other way round.
  */
 function unrotate(dx, dy) {
   if (view.rot === 90) return [dy, -dx];
@@ -504,7 +504,7 @@ function applyView() {
   const vw = canvas.width, vh = canvas.height;
   const r = stage.getBoundingClientRect();
   if (!vw || !vh || r.width < 1 || r.height < 1) return;
-  // Burilgan holatda video ekranga yon tomoni bilan sig'adi
+  // Rotated, the video fits the screen on its side
   const sideways = view.rot === 90 || view.rot === 270;
   const fit = sideways
     ? Math.min(r.width / vh, r.height / vw)
@@ -520,13 +520,13 @@ function applyView() {
   $("btnRotate").classList.toggle("on", view.rot !== 0);
 }
 
-/** Telefon tik turganda videoni yotqizadi. */
+/** Lays the video on its side while the phone is upright. */
 function autoRotate() {
   if (!view.auto) return;
   const r = stage.getBoundingClientRect();
   const portrait = r.height > r.width;
   const wide = canvas.width >= canvas.height;
-  // Qaysi tomonga burish - foydalanuvchi tanlovi, uni saqlaymiz
+  // Which way to rotate is the user's choice, and it is remembered
   const want = portrait && wide ? (prefs.rotDir === 270 ? 270 : 90) : 0;
   if (want !== view.rot) {
     view.rot = want;
@@ -541,10 +541,10 @@ function resetView() {
   applyView();
 }
 
-/** Berilgan nuqtaga bosadi. Koordinata aniqlanmasa kursor turgan joyga. */
+/** Clicks at a point, or where the cursor is when there is none. */
 function clickAt(point, button = "left") {
   const n = point ? pointToNorm(point.x, point.y) : null;
-  if (n && !n.inside) return;          // qora chekkaga tegildi
+  if (n && !n.inside) return;          // the black margin was touched
   if (n) link.send({ t: "mouse", a: "click", b: button, x: n.x, y: n.y });
   else link.send({ t: "mouse", a: "click", b: button });
 }
@@ -564,43 +564,43 @@ function showHint(cx, cy) {
   hint._t = setTimeout(() => hint.classList.remove("show"), 400);
 }
 
-/** Ushlangan/qo'yilgan holatni bildiradi. */
+/** Signals the grabbed / released state. */
 function grabFeedback(on) {
   const hint = $("cursorHint");
   clearTimeout(hint._t);
   if (on) {
     hint.classList.add("grab", "show");
     navigator.vibrate?.([14, 45, 28]);
-    toast("Ushlandi — suring, barmoqni ko‘tarsangiz qo‘yiladi");
+    toast("Grabbed — drag it, lift your finger to drop it");
   } else {
     hint.classList.remove("grab", "show");
   }
 }
 
-/* Imo-ishoralar sozlamalari. Barchasi piksel va millisekundda. */
-// Chegaralar Windows odatlariga moslangan: uning ikki marta bosish
-// oralig'i standart holda 500 ms. Avvalgi 330 ms juda qisqa edi -
-// odam biroz sekinroq bossa ikkinchi bosish alohida hisoblanardi.
-const TAP_MS = 400;         // shu vaqtdan tez ko'tarilsa - bosish
-const DOUBLE_MS = 500;      // ikki bosish orasidagi eng uzun tanaffus
-const DOUBLE_PX = 55;       // ikkinchi bosish shuncha yaqin bo'lishi kerak
-const DRAG_HOLD_MS = 320;   // ikkinchi tegish shuncha ushlansa - sudrash
-const MOVE_START_PX = 5;    // barmoq titrashi harakatga aylanmasligi uchun
-const SWITCH_START_PX = 45; // uch barmoq: oyna almashtirish boshlanishi
-const SWITCH_STEP_PX = 75;  // har shuncha surilganda - keyingi oyna
-const SWITCH_VERT_PX = 70;  // uch barmoq: yuqoriga/pastga
-const EDGE_SWIPE_PX = 55;   // qora chekkada surish: ekran almashtirish
-// Bosib turib ushlash. Ikki marta bosib sudrash trackpad odati bo'lib,
-// telefonda uni bajarish qiyin ekan - bu esa oddiyroq yo'l: barmoqni
-// bosib tursang ushlaydi, surasan, ko'tarsang qo'yadi.
+/* Gesture settings. All of them in pixels and milliseconds. */
+// The thresholds match Windows conventions: its double-click interval
+// is 500 ms by default. The earlier 330 ms was far too short - press a
+// little slower and the second click counted as a separate one.
+const TAP_MS = 400;         // lifted faster than this counts as a tap
+const DOUBLE_MS = 500;      // the longest gap between two taps
+const DOUBLE_PX = 55;       // how close the second tap has to land
+const DRAG_HOLD_MS = 320;   // hold the second touch this long to drag
+const MOVE_START_PX = 5;    // so a trembling finger is not a movement
+const SWITCH_START_PX = 45; // three fingers: where window switching starts
+const SWITCH_STEP_PX = 75;  // every this much of a drag: the next window
+const SWITCH_VERT_PX = 70;  // three fingers: up / down
+const EDGE_SWIPE_PX = 55;   // a swipe in the black margin: switch screens
+// Press and hold to grab. Double-tap-and-drag is a trackpad habit and
+// turned out to be hard to perform on a phone; this is the simpler way:
+// hold to grab, drag, lift to drop.
 const HOLD_GRAB_MS = 800;
 
 const touch = {
   pts: new Map(),
   gesture: null,      // 'point' | 'two' | 'switch' | 'done'
   two: null,          // 'scroll' | 'zoom' | 'pan'
-  anchor: null,       // bosish yuboriladigan nuqta
-  start: null,        // barmoq tushgan joy
+  anchor: null,       // the point a click is sent to
+  start: null,        // where the finger landed
   last: null,
   startAt: 0,
   moved: false,
@@ -608,20 +608,20 @@ const touch = {
   dragging: false,
   dragTimer: null,
   longPress: null,
-  lastTap: null,      // {x, y, at} - oldingi bosish
+  lastTap: null,      // {x, y, at} - the previous tap
   isSecondTap: false,
   lastDist: 0,
   lastMid: null,
   startDist: 0,
   startMid: null,
   scrollAcc: 0,
-  scrollAxis: "y",    // aylantirish qaysi o'q bo'yicha
-  sw: null,           // uch barmoq holati
+  scrollAxis: "y",    // which axis scrolling follows
+  sw: null,           // the three-finger state
 };
 
-// Nosozlik izlash uchun: manzilga ?debug qo'shilsa ichki holat brauzer
-// konsolidan ko'rinadi. Imo-ishoralar sezgir joy, ularni tekshirishning
-// boshqa yo'li yo'q.
+// For troubleshooting: adding ?debug to the address exposes the
+// internal state in the browser console. Gestures are delicate and there
+// is no other way to inspect them.
 if (location.search.includes("debug")) {
   window.__pult = { touch, prefs, link, view };
 }
@@ -661,23 +661,23 @@ function endDrag() {
   grabFeedback(false);
 }
 
-/* -- ekran ko'rsatkichi va almashtirgichi -------------------------------- */
+/* -- the screen indicator and switcher ---------------------------------- */
 
-/** Ekranlar jismoniy joylashuvi bo'yicha, chapdan o'ngga.
+/** The screens by physical position, left to right.
  *
- * Ro'yxatdagi tartib qurilma raqamiga asoslangan va u jismoniy
- * joylashuvga mos kelmasligi mumkin. "O'ngdagi ekran" deganda esa
- * foydalanuvchi haqiqiy joylashuvni nazarda tutadi.
+ * The order in the list follows the device number, which need not match
+ * the physical layout. When someone says "the right-hand screen" they
+ * mean the real arrangement.
  */
 function monitorsByPosition() {
   return [...((host && host.monitors) || [])].sort((a, b) => a.x - b.x || a.y - b.y);
 }
 
-/** Ekranning foydalanuvchi ko'radigan raqami: chapdan o'ngga 1, 2, 3...
+/** The screen number the user sees: 1, 2, 3... from left to right.
  *
- * Tizimdagi raqam qurilma nomiga bog'liq va jismoniy joylashuvga mos
- * kelmasligi mumkin. Foydalanuvchi esa "chapdagi" va "o'ngdagi" deb
- * o'ylaydi, shuning uchun hamma joyda shu raqam ko'rsatiladi.
+ * The system's number depends on the device name and need not match the
+ * physical layout, while the user thinks "the left one" and "the right
+ * one" - so this number is what is shown everywhere.
  */
 function monitorLabel(index) {
   const at = monitorsByPosition().findIndex((m) => m.index === index);
@@ -688,7 +688,7 @@ function makeTool(icon, caption, onTap, active) {
   const b = document.createElement("button");
   b.className = "tool" + (active ? " active" : "");
   const sp = document.createElement("span");
-  // Belgi SVG bo'lishi mumkin (chiziqli), yoki oddiy matn (raqam, harf)
+  // The icon can be an SVG (a line icon) or plain text (a digit, a letter)
   if (icon.startsWith("<svg")) sp.innerHTML = icon; else sp.textContent = icon;
   const i = document.createElement("i");
   i.textContent = caption;
@@ -697,12 +697,12 @@ function makeTool(icon, caption, onTap, active) {
   return b;
 }
 
-/** Pastki qatorning o'rtasi: ekranlar yoki sichqoncha tugmalari.
+/** The middle of the bottom row: screens, or mouse buttons.
  *
- * Ekran almashtirish uchun avval videoning yon-veridagi qora chekkani
- * surish kerak edi, lekin u telefonda atigi 20 chogli piksel bo'lib
- * chiqdi - barmoq bilan aniq tegib bo'lmaydi. Tugmalar ishonchli.
- * Chekkani surish ham qoldirildi, u endi qo'shimcha yo'l.
+ * Switching screens used to need a swipe in the black margin beside the
+ * video, but on a phone that margin turned out to be around 20 pixels -
+ * too little to hit accurately with a finger. Buttons are reliable. The
+ * margin swipe was kept as well; it is now an extra route.
  */
 function buildToolMid() {
   const mid = $("toolMid");
@@ -711,17 +711,18 @@ function buildToolMid() {
   if (list.length >= 2) {
     list.forEach((m, i) => {
       mid.appendChild(makeTool(
-        String(i + 1), "ekran",
+        String(i + 1), "screen",
         () => selectMonitor(m.index),
         m.index === currentMonitor,
       ));
     });
   } else {
-    // Bitta ekranda almashtiradigan narsa yo'q - sichqoncha tugmalari.
-    // Belgi o'rniga harf: "chap"/"o'ng" yozuvi bilan birga bu aniqroq.
-    mid.appendChild(makeTool("L", "chap",
+    // With one screen there is nothing to switch - mouse buttons then.
+    // Letters rather than icons: together with the "left"/"right"
+    // captions they are clearer.
+    mid.appendChild(makeTool("L", "left",
       () => link.send({ t: "mouse", a: "click", b: "left" })));
-    mid.appendChild(makeTool("R", "o‘ng",
+    mid.appendChild(makeTool("R", "right",
       () => link.send({ t: "mouse", a: "click", b: "right" })));
   }
 }
@@ -761,21 +762,21 @@ function selectMonitor(index) {
   link.send({ t: "view", on: true, monitor: index });
   flashMonbar();
   navigator.vibrate?.(12);
-  toast(`${monitorLabel(index)}-ekran`);
+  toast(`Screen ${monitorLabel(index)}`);
 }
 
-/** Yonidagi ekranga o'tadi. dir: +1 o'ngdagi, -1 chapdagi. */
+/** Moves to the neighbouring screen. dir: +1 right, -1 left. */
 function switchMonitorBy(dir) {
   const list = monitorsByPosition();
   if (list.length < 2) return false;
   const at = list.findIndex((m) => m.index === currentMonitor);
   const next = list[at + dir];
-  if (!next) return false;      // chekkadagi ekran - aylanmaymiz
+  if (!next) return false;      // the outermost screen - no wrapping
   selectMonitor(next.index);
   return true;
 }
 
-/** Qora chekkadagi tegish qaysi nuqtaga tushdi. */
+/** Which dot a touch in the black margin landed on. */
 function monbarDotAt(x, y) {
   const bar = $("monbar");
   if (bar.hidden) return null;
@@ -788,10 +789,10 @@ function monbarDotAt(x, y) {
   return null;
 }
 
-/* -- uch barmoq: oyna almashtirish -------------------------------------- */
+/* -- three fingers: switching windows ----------------------------------- */
 
 function switchStep(dir) {
-  // Alt bosilgan holda Tab - oldinga, Shift+Tab - orqaga
+  // With Alt held, Tab goes forward and Shift+Tab back
   if (dir < 0) {
     link.send({ t: "key", a: "down", k: "shift" });
     link.send({ t: "key", a: "tap", k: "Tab" });
@@ -805,13 +806,13 @@ function switchStep(dir) {
 function endSwitch() {
   const sw = touch.sw;
   if (sw && sw.alt) {
-    // Alt qo'yilganda tanlangan oyna oldinga chiqadi
+    // Releasing Alt brings the selected window to the front
     link.send({ t: "key", a: "up", k: "alt" });
   }
   touch.sw = null;
 }
 
-/* -- barmoq hodisalari --------------------------------------------------- */
+/* -- touch events -------------------------------------------------------- */
 
 stage.addEventListener("touchstart", (e) => {
   e.preventDefault();
@@ -830,11 +831,11 @@ stage.addEventListener("touchstart", (e) => {
     touch.movedEnough = false;
     touch.gesture = "point";
 
-    // Videodan tashqaridagi qora chekka - ekran almashtirgich.
-    // Sozlamalarga kirmasdan bitta surish bilan qo'shni ekranga
-    // o'tish uchun.
-    // Ko'rsatkichning o'zi ham hisoblanadi: u qora chekkadan bir oz
-    // balandroq va pastki qismi videoga tegib turadi.
+    // The black margin outside the video is the screen switcher: one
+    // swipe moves to the neighbouring screen without opening the
+    // settings.
+    // The indicator itself counts too: it is a little taller than the
+    // margin and its bottom edge touches the video.
     const n0 = pointToNorm(p.x, p.y);
     const onBar = monbarDotAt(p.x, p.y) !== null;
     if ((onBar || (n0 && n0.outside)) && monitorsByPosition().length > 1) {
@@ -849,17 +850,16 @@ stage.addEventListener("touchstart", (e) => {
       dist(p, touch.lastTap) < DOUBLE_PX
     );
 
-    // Ikkinchi bosish ataylab BIRINCHISINING joyiga yuboriladi. Barmoq
-    // aynan bir nuqtaga ikki marta tushmaydi, ikkita bosish esa turli
-    // joyga tushsa Windows ularni ikki marta bosish deb qabul qilmaydi.
+    // The second click is deliberately sent to the FIRST one's position.
+    // A finger never lands on exactly the same spot twice, and Windows
+    // does not treat two clicks in different places as a double-click.
     touch.anchor = touch.isSecondTap
       ? { x: touch.lastTap.x, y: touch.lastTap.y }
       : { ...p };
 
     if (touch.isSecondTap) {
-      // Bu yerda darrov sudrashni boshlamaymiz: barmoq tez ko'tarilsa
-      // bu ikki marta bosish, ushlab turilsa - sudrash. Qarorni
-      // kechiktiramiz.
+      // Do not start dragging right away: lifted quickly this is a
+      // double-click, held it is a drag. The decision is deferred.
       touch.dragTimer = setTimeout(() => {
         touch.dragTimer = null;
         if (touch.pts.size === 1 && !touch.movedEnough) beginDrag();
@@ -869,9 +869,9 @@ stage.addEventListener("touchstart", (e) => {
         const n = pointToNorm(p.x, p.y);
         if (n && n.inside) sendMove(n.x, n.y);
       }
-      // Bosib turib ushlash - ikkala rejimda ham. Avval bu faqat
-      // sensor rejimida va o'ng tugma uchun ishlatilardi; o'ng tugma
-      // ikki barmoq bilan tegishda qoldi.
+      // Press-and-hold to grab, in both modes. It used to work only in
+      // touch mode and for the right button; the right button now lives
+      // on a two-finger tap.
       touch.longPress = setTimeout(() => {
         touch.longPress = null;
         if (!touch.movedEnough && touch.pts.size === 1 && !touch.dragging) {
@@ -915,7 +915,7 @@ stage.addEventListener("touchmove", (e) => {
     if (Math.abs(dx) > EDGE_SWIPE_PX && Math.abs(dx) > Math.abs(dy)) {
       touch.moved = true;
       switchMonitorBy(dx > 0 ? 1 : -1);
-      touch.gesture = "done";      // bitta surishda bitta ekran
+      touch.gesture = "done";      // one screen per swipe
     }
     return;
   }
@@ -927,15 +927,15 @@ stage.addEventListener("touchmove", (e) => {
     touch.last = { ...p };
 
     if (!touch.movedEnough) {
-      // Boshlanishda kichik titrashni butunlay e'tiborsiz qoldiramiz -
-      // aks holda bosish paytida kursor siljib ketadi.
+      // Ignore a small tremble at the start entirely - otherwise the
+      // cursor drifts while tapping.
       if (dist(p, touch.start) <= MOVE_START_PX) return;
       touch.movedEnough = true;
       touch.moved = true;
       clearTimeout(touch.longPress);
       touch.longPress = null;
       if (touch.isSecondTap && touch.dragTimer) {
-        // Ikkinchi tegishda surila boshladi - demak sudrash
+        // The second touch started moving - so it is a drag
         clearTimeout(touch.dragTimer);
         touch.dragTimer = null;
         beginDrag();
@@ -960,21 +960,21 @@ stage.addEventListener("touchmove", (e) => {
     const dmx = m.x - touch.lastMid.x;
 
     if (!touch.two) {
-      // Turkumlash boshlanishidan emas, YETARLI harakat to'planganidan
-      // keyin qilinadi. Birinchi touchmove'da barmoqlar orasi bir-ikki
-      // pikselga o'zgaradi, xolos - o'sha payt qaror qilinsa har doim
-      // "aylantirish" chiqib qolar va yaqinlashtirish umuman ishlamasdi.
+      // Classified once ENOUGH movement has accumulated, not at the
+      // start. On the first touchmove the distance between the fingers
+      // changes by a pixel or two at most - deciding then always came
+      // out as "scroll" and zooming never worked at all.
       const spread = Math.abs(d - touch.startDist);
       const slide = Math.hypot(m.x - touch.startMid.x, m.y - touch.startMid.y);
       if (Math.max(spread, slide) > 14) {
         if (spread > slide) touch.two = "zoom";
         else touch.two = view.zoom > 1.02 ? "pan" : "scroll";
         if (touch.two === "scroll") {
-          // Aylantirish o'qini bir marta tanlaymiz. Ko'rinish burilgan
-          // bo'lsa foydalanuvchi telefonni ham burib ushlashi mumkin,
-          // shuning uchun qaysi tomonga surgan bo'lsa - o'sha o'q.
-          // Avval barmoq yo'nalishi majburan video yo'nalishiga
-          // o'girilardi va tik surish umuman aylantirmasdi.
+          // The scroll axis is chosen once. With the view rotated the
+          // user may be holding the phone rotated too, so the axis
+          // follows the direction they actually dragged. Before, the
+          // finger direction was forced into the video's direction and
+          // a vertical drag scrolled nothing at all.
           const sy = Math.abs(m.y - touch.startMid.y);
           const sx = Math.abs(m.x - touch.startMid.x);
           touch.scrollAxis = (view.rot === 0 || sy >= sx) ? "y" : "x";
@@ -987,7 +987,7 @@ stage.addEventListener("touchmove", (e) => {
       view.zoom = clamp(view.zoom * (1 + dd / 220), 1, 8);
       if (view.zoom <= 1.02) { view.zoom = 1; view.panX = view.panY = 0; }
       else if (prev > 1.01) {
-        // Yaqinlashtirganda barmoqlar orasidagi nuqta joyida qolsin
+        // While zooming, keep the point between the fingers in place
         const f = view.zoom / prev;
         const r2 = stage.getBoundingClientRect();
         const ax = m.x - (r2.left + r2.width / 2);
@@ -1027,8 +1027,8 @@ stage.addEventListener("touchmove", (e) => {
 
     if (sw.mode === "tab") {
       if (!sw.alt) {
-        // Alt bosilib turadi va barmoqlar ko'tarilguncha qo'yilmaydi -
-        // shunda oyna tanlash oynasi ekranda qolib, surilishga ergashadi.
+        // Alt stays down and is not released until the fingers lift, so
+        // the window picker stays on screen and follows the drag.
         link.send({ t: "key", a: "down", k: "alt" });
         sw.alt = true;
         sw.acc = 0;
@@ -1043,11 +1043,11 @@ stage.addEventListener("touchmove", (e) => {
     } else if (sw.mode === "vert" && !sw.done) {
       sw.done = true;
       if (dy < 0) {
-        link.send({ t: "combo", keys: ["win", "Tab"] });   // vazifalar ko'rinishi
-        toast("Vazifalar ko‘rinishi");
+        link.send({ t: "combo", keys: ["win", "Tab"] });   // task view
+        toast("Task view");
       } else {
-        link.send({ t: "combo", keys: ["win", "d"] });     // ish stoli
-        toast("Ish stoli");
+        link.send({ t: "combo", keys: ["win", "d"] });     // the desktop
+        toast("Desktop");
       }
       navigator.vibrate?.(15);
     }
@@ -1095,9 +1095,9 @@ stage.addEventListener("touchend", (e) => {
 
   clearTimers();
 
-  // Ushlash chegarasigacha bo'lgan har qanday tegish - oddiy bosish.
-  // Aks holda 400 ms bilan 800 ms orasida "hech narsa bo'lmaydigan"
-  // bo'shliq qolardi.
+  // Any touch shorter than the grab threshold is a plain tap.
+  // Otherwise there was a gap between 400 ms and 800 ms where nothing
+  // happened at all.
   const isTap = before === 1 && remaining === 0 && touch.gesture === "point"
     && !touch.movedEnough && dt < HOLD_GRAB_MS;
 
@@ -1106,11 +1106,11 @@ stage.addEventListener("touchend", (e) => {
     clickAt(prefs.mode === "touch" ? a : null, "left");
     showHint(a.x, a.y);
     navigator.vibrate?.(8);
-    // Ikkinchi bosishdan keyin hisob noldan boshlanadi, aks holda uchinchi
-    // tegish ham "ikkinchi" bo'lib qolaverardi.
+    // After a second tap the count restarts, otherwise a third touch
+    // would keep counting as "the second" one.
     touch.lastTap = touch.isSecondTap ? null : { x: a.x, y: a.y, at: now };
   } else if (before === 2 && remaining === 0 && !touch.moved && dt < TAP_MS) {
-    // Ikki barmoq bilan tegish = o'ng tugma (trackpad odati)
+    // A two-finger tap is the right button (a trackpad habit)
     link.send({ t: "mouse", a: "click", b: "right" });
     navigator.vibrate?.(12);
     touch.lastTap = null;
@@ -1134,7 +1134,7 @@ stage.addEventListener("touchcancel", () => {
 });
 
 
-// Kompyuter brauzeridan sinash uchun sichqoncha ham ishlaydi
+// The mouse works too, for trying it from a desktop browser
 canvas.addEventListener("mousemove", (e) => {
   if (e.buttons === 0 && prefs.mode !== "touch") return;
   const p = pointToNorm(e.clientX, e.clientY);
@@ -1155,10 +1155,10 @@ stage.addEventListener("wheel", (e) => {
   link.send({ t: "scroll", dy: -e.deltaY / 100 });
 }, { passive: false });
 
-/* Kompyuter brauzerida haqiqiy klaviatura ishlaydi: bosilgan klavish
- * narigi tomonga uzatiladi. Telefonda bu kerak emas - u yerda ekrandagi
- * tugmalar qatori bor, va telefon klaviaturasi keydown'da harflarni
- * ishonchli bermaydi. */
+/* In a desktop browser the real keyboard works: a pressed key is
+ * forwarded to the other side. On a phone this is not needed - there is
+ * the on-screen key row, and a phone keyboard does not report letters
+ * reliably in keydown. */
 const DESK_KEYS = new Set([
   "Enter", "Backspace", "Tab", "Escape", "Delete", "Home", "End",
   "PageUp", "PageDown", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
@@ -1167,7 +1167,7 @@ const DESK_KEYS = new Set([
 
 addEventListener("keydown", (e) => {
   if (!deskQuery.matches) return;
-  // Sozlamalardagi maydonlarga yozayotgan bo'lsa - tegmaymiz
+  // Leave it alone while typing into a settings field
   const el = document.activeElement;
   if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
   if (!streaming) return;
@@ -1178,7 +1178,7 @@ addEventListener("keydown", (e) => {
   if (e.shiftKey) mods.push("shift");
   if (e.metaKey) mods.push("win");
 
-  // F5 va Ctrl+R sahifani yangilab yuborardi - narigi tomonga ketsin
+  // F5 and Ctrl+R used to reload the page - send them across instead
   if (mods.length && (e.key.length === 1 || DESK_KEYS.has(e.key))) {
     e.preventDefault();
     link.send({ t: "combo", keys: [...mods, e.key.toLowerCase()] });
@@ -1186,31 +1186,31 @@ addEventListener("keydown", (e) => {
     e.preventDefault();
     link.send({ t: "key", a: "tap", k: e.key });
   } else if (e.key.length === 1) {
-    // Bitta belgi - matn sifatida yuboramiz: shunda unicode va
-    // o'zbek harflari ham to'g'ri tushadi.
+    // A single character goes as text, so unicode and non-Latin
+    // letters arrive correctly.
     e.preventDefault();
     link.send({ t: "text", s: e.key });
   }
 });
 
-/* -------------------------------------------------------- tugmalar */
+/* ----------------------------------------------------------- buttons */
 
-/* Ilgari bu yerda "2x" tugmasi bor edi - ikki marta bosish uchun.
- * Olib tashlandi: yozuvi "ikki" bo'lgani uchun uni ikkita ekranni
- * birga ko'rish tugmasi deb tushunish oson edi, foydasi esa yo'q -
- * ikki marta tegish imo-ishorasi allaqachon bor. */
+/* There used to be a "2x" button here, for double-clicking. It was
+ * removed: with "two" on its face it was easy to read as a button for
+ * watching two screens at once, and it earned nothing - the
+ * double-tap gesture already exists. */
 
-/* -- ko'rinish tugmalari ------------------------------------------------ */
+/* -- the view buttons --------------------------------------------------- */
 
 function toggleRotate() {
-  // Uch holat: tik -> chapga -> o'ngga. Telefonni qaysi tomonga burish
-  // odat bo'lsa, o'shanisini tanlash uchun ikkala yo'nalish ham bor.
+  // Three states: upright -> left -> right. Both directions are there
+  // so people can pick whichever way they habitually turn the phone.
   const next = { 0: 90, 90: 270, 270: 0 }[view.rot] ?? 90;
   view.rot = next;
   view.panX = view.panY = 0;
   if (next !== 0) prefs.rotDir = next;
-  // Qo'lda burilganda avtomatik tanlov o'chadi, aks holda keyingi qayta
-  // hisobda tanlov bekor bo'lib ketardi.
+  // Rotating by hand turns the automatic choice off, otherwise the next
+  // recalculation would undo the choice.
   view.auto = next === 0 ? false : view.auto;
   if (next === 0) {
     prefs.autoRotate = false;
@@ -1218,7 +1218,7 @@ function toggleRotate() {
   }
   savePrefs();
   applyView();
-  toast(next === 0 ? "Tik holat" : (next === 90 ? "Yotqizildi ↶" : "Yotqizildi ↷"));
+  toast(next === 0 ? "Upright" : (next === 90 ? "Laid down ↶" : "Laid down ↷"));
 }
 
 async function toggleFullscreen() {
@@ -1230,19 +1230,18 @@ async function toggleFullscreen() {
     }
     await document.documentElement.requestFullscreen({ navigationUI: "hide" });
     $("btnFull").classList.add("on");
-    // Yotqizishni so'raymiz. Ko'p brauzerlar buni faqat to'liq ekranda
-    // qabul qiladi, ba'zilari umuman qo'llab-quvvatlamaydi - shuning
-    // uchun rad javobi xato hisoblanmaydi.
+    // Ask for landscape. Most browsers only accept this in full screen
+    // and some do not support it at all, so a refusal is not an error.
     try { await screen.orientation.lock("landscape"); } catch {}
   } catch {
-    toast("Brauzer to‘liq ekranga ruxsat bermadi");
+    toast("The browser refused full screen");
   }
   setTimeout(refreshView, 200);
 }
 
-// Manbani almashtirish: ro'yxat bo'ylab aylanadi. Ikkitadan ko'p
-// manba bo'lsa sozlamalardagi to'liq ro'yxat qulayroq, lekin odatiy
-// holat - "kompyuter <-> telefon", unga bitta bosish yetadi.
+// Switching source: it cycles through the list. With more than two
+// sources the full list in the settings is more convenient, but the
+// usual case is "computer <-> phone", where one press is enough.
 $("btnSource").addEventListener("click", () => {
   const list = sourceList();
   if (list.length < 2) return;
@@ -1257,7 +1256,7 @@ $("btnFull2").addEventListener("click", toggleFullscreen);
 $("btnFit").addEventListener("click", () => {
   view.auto = prefs.autoRotate !== false;
   resetView();
-  toast("O‘lchamga solindi");
+  toast("Fitted to the screen");
 });
 $("btnZoom").addEventListener("click", () => {
   view.zoom = 1;
@@ -1280,12 +1279,12 @@ $("btnMode").addEventListener("click", () => {
   savePrefs();
   updateModeButton();
   toast(prefs.mode === "trackpad"
-    ? "Trackpad: barmoq surilsa kursor siljiydi"
-    : "Sensor rejimi: qayerga bossang, sichqoncha o‘sha yerga bosadi");
+    ? "Trackpad: drag your finger and the cursor moves"
+    : "Touch mode: the mouse clicks wherever you tap");
 });
 
-/* Rejim tugmasining belgilari - chiziqli SVG, emoji emas: emoji har
- * qurilmada boshqacha chiziladi va rangini boshqarib bo'lmaydi. */
+/* The mode button's icons are line SVGs, not emoji: emoji are drawn
+ * differently on every device and their colour cannot be controlled. */
 const MODE_ICONS = {
   trackpad: '<svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 14h18M12 14v5"/></svg>',
   touch: '<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5"/></svg>',
@@ -1295,13 +1294,13 @@ function updateModeButton() {
   const b = $("btnMode");
   const direct = prefs.mode === "touch";
   b.querySelector("span").innerHTML = direct ? MODE_ICONS.touch : MODE_ICONS.trackpad;
-  b.querySelector("i").textContent = direct ? "sensor" : "trackpad";
-  // Faol holat ko'rinib tursin: tugma qaysi rejim YOQILGANINI ko'rsatadi,
-  // bosilganda ikkinchisiga o'tadi.
+  b.querySelector("i").textContent = direct ? "touch" : "trackpad";
+  // Show the active state: the button says which mode is ON, and
+  // pressing it switches to the other one.
   b.classList.toggle("active", direct);
 }
 
-/* -------------------------------------------------------- klaviatura */
+/* ---------------------------------------------------------- keyboard */
 
 const mods = new Set();
 
@@ -1373,7 +1372,7 @@ typer.addEventListener("keydown", (e) => {
   }
 });
 
-/* ------------------------------------------------------- sozlamalar */
+/* ----------------------------------------------------------- settings */
 
 function buildMonitors(monitors) {
   const row = $("monitorRow");
@@ -1381,19 +1380,19 @@ function buildMonitors(monitors) {
   monitorsByPosition().forEach((m, i) => {
     const b = document.createElement("button");
     b.className = "btn" + (currentMonitor === m.index ? " on" : "");
-    b.textContent = `${i + 1}-ekran · ${m.w}×${m.h}${m.primary ? " ★" : ""}`;
+    b.textContent = `Screen ${i + 1} · ${m.w}×${m.h}${m.primary ? " ★" : ""}`;
     b.onclick = () => selectMonitor(m.index);
     row.appendChild(b);
   });
 }
 
 function sourceLabel(src) {
-  return src.kind === "pc" ? `Kompyuter · ${src.name}` : `Telefon · ${src.name}`;
+  return src.kind === "pc" ? `Computer · ${src.name}` : `Phone · ${src.name}`;
 }
 
 function sourceList() {
   return sources.length ? sources
-    : [{ id: "local", name: (host && host.name) || "Kompyuter", kind: "pc" }];
+    : [{ id: "local", name: (host && host.name) || "Computer", kind: "pc" }];
 }
 
 function buildSources() {
@@ -1407,13 +1406,14 @@ function buildSources() {
     b.onclick = () => selectSource(src.id);
     row.appendChild(b);
   });
-  // Ekran tanlash faqat kompyuterda ma'noga ega - telefonda bitta ekran
+  // Choosing a screen only means something on a computer - a phone has one
   $("monitorSection").hidden = currentSource !== "local";
   $("sourceHint").hidden = list.length > 1;
 
-  // Manba tugmasi yuqori qatorda ham turadi. Ilgari u faqat
-  // sozlamalar ichida edi va telefonni kompyuterda ko'rish yo'lini
-  // topib bo'lmasdi - ko'rinmagan imkoniyat yo'q imkoniyat bilan teng.
+  // The source button sits in the top bar as well. It used to live only
+  // inside the settings, and there was no way to find how to watch the
+  // phone on the computer - a feature nobody can see is a feature that
+  // does not exist.
   const chip = $("btnSource");
   chip.hidden = list.length < 2;
   if (!chip.hidden) {
@@ -1422,23 +1422,23 @@ function buildSources() {
   }
 }
 
-/* Telefon so'ralgan, lekin hali ulanmagan bo'lsa - nima qilish
- * kerakligini aytib turamiz. Bo'sh qora ekran hech narsa tushuntirmaydi. */
+/* When a phone was asked for but has not connected, say what to do
+ * about it. An empty black screen explains nothing. */
 function updateWaiting() {
   if (wantView !== "phone" || autoPicked) return;
   if (sources.some((s) => s.kind !== "pc")) return;
   setPlaceholder(
-    "Telefon hali ulanmagan.\n" +
-    "Ilova bo‘lsa: kompyuterni tanlab «Ekranimni uzatish» ni bosing.\n" +
-    "Bo‘lmasa: QR kodni skanerlang — ilova o‘zi ochiladi.",
+    "No phone is connected yet.\n" +
+    "With the app: pick this computer and press \u201cShare my screen\u201d.\n" +
+    "Without it: scan the QR code — the app opens itself.",
     null
   );
   showPairBox();
 }
 
-/* Ulash uchun QR - asosiy oynaning o'zida. Shunda "telefonni qayerda
- * ko'raman" va "qanday ulayman" bitta joyda javob topadi; ilgari
- * QR alohida sahifada edi va uni izlab yurish kerak bo'lardi. */
+/* The pairing QR code, inside the main window. That way "where do I see
+ * my phone" and "how do I connect it" are answered in one place; the QR
+ * code used to be on a separate page that had to be hunted for. */
 let pairLoaded = false;
 async function showPairBox() {
   const box = $("pairBox");
@@ -1453,7 +1453,7 @@ async function showPairBox() {
     $("pairSend").hidden = !d.telegram;
     pairLoaded = true;
   } catch (e) {
-    $("pairQr").textContent = "QR yuklanmadi";
+    $("pairQr").textContent = "The QR code did not load";
   }
 }
 
@@ -1465,29 +1465,29 @@ function pairSay(text, bad) {
 
 $("pairCopy").addEventListener("click", () => {
   navigator.clipboard.writeText($("pairLink").textContent).then(
-    () => pairSay("Nusxalandi"),
-    () => pairSay("Nusxalab bo‘lmadi", true)
+    () => pairSay("Copied"),
+    () => pairSay("Could not copy", true)
   );
 });
 
 $("pairSend").addEventListener("click", async () => {
   const b = $("pairSend");
   b.disabled = true;
-  pairSay("Yuborilmoqda…");
+  pairSay("Sending…");
   try {
     const r = await fetch(`/api/pair/send?k=${encodeURIComponent(link.token)}`,
                           { method: "POST" });
     const d = await r.json();
-    pairSay(d.ok ? "Telegramga yuborildi" : (d.msg || "Yuborilmadi"), !d.ok);
+    pairSay(d.ok ? "Sent to Telegram" : (d.msg || "Not sent"), !d.ok);
   } catch (e) {
-    pairSay("Yuborilmadi", true);
+    pairSay("Not sent", true);
   }
   b.disabled = false;
 });
 
-/* view=phone bilan ochilganda ulangan telefonni o'zi tanlaydi.
- * Telefon keyinroq ulansa ham ishlaydi: "sources" xabari kelganda
- * yana tekshiriladi. */
+/* Opened with view=phone, it picks the connected phone by itself. It
+ * works when the phone connects later too: the check runs again when a
+ * "sources" message arrives. */
 let autoPicked = false;
 function autoPickSource(quiet) {
   if (autoPicked || wantView !== "phone") return false;
@@ -1506,26 +1506,26 @@ function selectSource(id) {
   if (id === currentSource) return;
   currentSource = id;
   decoder.close();
-  setPlaceholder("Ulanmoqda…");
+  setPlaceholder("Connecting…");
   buildSources();
   buildToolMid();
   buildMonbar();
   updateHostLabel();
   resetView();
-  // startStream() ishlatiladi, chunki u sifat sozlamalarini ham
-  // yuboradi va "oqim yonyapti" holatini belgilaydi. Yalang'och
-  // "view" xabari kadrlarni keltirardi, lekin sozlamalar standart
-  // bo'lib qolar va klaviatura ishlamasdi.
+  // startStream() is used because it also sends the quality settings
+  // and marks the stream as running. A bare "view" message did bring
+  // frames in, but the settings stayed at their defaults and the
+  // keyboard did not work.
   startStream();
   const src = sources.find((x) => x.id === id);
   toast(src ? sourceLabel(src) : id);
 }
 
 const CMD_LABELS = {
-  lock: "Qulflash", sleep: "Uxlatish", hibernate: "Gibernatsiya",
-  shutdown: "O‘chirish", reboot: "Qayta yuklash", logoff: "Chiqish",
-  cancel_shutdown: "Bekor qilish",
-  display_off: "Ekran o‘chsin", display_on: "Ekran yonsin",
+  lock: "Lock", sleep: "Sleep", hibernate: "Hibernate",
+  shutdown: "Shut down", reboot: "Restart", logoff: "Sign out",
+  cancel_shutdown: "Cancel",
+  display_off: "Screen off", display_on: "Screen on",
 };
 const CMD_CONFIRM = new Set(["shutdown", "reboot", "logoff", "hibernate"]);
 
@@ -1575,8 +1575,8 @@ $("sheet").addEventListener("click", (e) => { if (e.target.id === "sheet") $("sh
 $("chkFollow").onchange = (e) => {
   link.send({ t: "view", on: true, follow: e.target.checked });
   toast(e.target.checked
-    ? "Kursor ekranlar orasida yuradi, ko‘rinish unga ergashadi"
-    : "Kursor shu ekrandan chiqmaydi");
+    ? "The cursor moves between screens and the view follows it"
+    : "The cursor stays on this screen");
 };
 
 $("btnSwapMonitors").onclick = () => link.send({ t: "swap_monitors" });
@@ -1587,21 +1587,21 @@ $("btnRun").onclick = () => {
 };
 
 $("btnForget").onclick = () => {
-  if (!confirm("Kalit o‘chirilsin? Qayta ulanish uchun havola kerak bo‘ladi.")) return;
+  if (!confirm("Forget the key? You will need the link to connect again.")) return;
   localStorage.removeItem(KEY_STORE);
   location.reload();
 };
 
 $("phBtn").onclick = () => startStream();
 
-/* ---------------------------------------------------------- hayot sikli */
+/* ------------------------------------------------------------ lifecycle */
 
-// Ilova fonga o'tganda oqimni to'xtatamiz: bekorga trafik va batareya
-// sarflanmasin.
+// Stop the stream when the app goes to the background, so no traffic
+// and no battery are spent for nothing.
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
-    // Imo-ishora o'rtasida ilova fonga o'tsa, bosilgan klavish (masalan
-    // Alt+Tab paytidagi Alt) kompyuterda bosilgan holda qolib ketardi.
+    // With the app backgrounded mid-gesture, a held key (Alt during an
+    // Alt+Tab, say) used to stay pressed on the computer.
     clearTimers();
     endDrag();
     endSwitch();
@@ -1612,7 +1612,7 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-// Boshqaruv paytida ekran o'chib qolmasin
+// Do not let the screen turn off while controlling
 let wakeLock = null;
 async function keepAwake() {
   try {
@@ -1629,5 +1629,5 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }
 
-setPlaceholder("Ulanmoqda…");
+setPlaceholder("Connecting…");
 link.connect();

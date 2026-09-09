@@ -1,14 +1,15 @@
 <#
 .SYNOPSIS
-    Pult ilovasining APK faylini yig'adi.
+    Builds the APK for the Pult app.
 
 .DESCRIPTION
-    android_toolchain.ps1 o'rnatgan asboblardan foydalanadi. Tizim
-    o'zgaruvchilariga tegmaydi: JAVA_HOME va ANDROID_HOME faqat shu
-    jarayon uchun qo'yiladi.
+    Uses the tools android_toolchain.ps1 installed. It leaves the system
+    environment alone: JAVA_HOME and ANDROID_HOME are set for this
+    process only.
 
 .PARAMETER Release
-    Debug o'rniga release yig'ish. Imzo kaliti kerak (keystore.properties).
+    A release build instead of debug. Needs a signing key
+    (keystore.properties).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts\build_apk.ps1
@@ -30,10 +31,10 @@ $jdk = Join-Path $Root "jdk"
 $sdk = Join-Path $Root "android-sdk"
 
 if (-not (Test-Path (Join-Path $jdk "bin\java.exe"))) {
-    throw "JDK topilmadi. Avval: powershell -File scripts\android_toolchain.ps1"
+    throw "JDK not found. Run first: powershell -File scripts\android_toolchain.ps1"
 }
 if (-not (Test-Path (Join-Path $sdk "platforms"))) {
-    throw "Android SDK topilmadi. Avval: powershell -File scripts\android_toolchain.ps1"
+    throw "Android SDK not found. Run first: powershell -File scripts\android_toolchain.ps1"
 }
 
 # ------------------------------------------------------------- Gradle
@@ -42,9 +43,9 @@ $gradleBin = Join-Path $gradleDir "bin\gradle.bat"
 if (-not (Test-Path $gradleBin)) {
     $zip = Join-Path $Root "downloads\gradle-$GradleVersion.zip"
 
-    # Arxiv yarim yuklangan bo'lishi mumkin (parallel yuklash yoki uzilish).
-    # Uni ochishga urinish tushunarsiz xato beradi, shuning uchun avval
-    # butunligini tekshiramiz.
+    # The archive may be half-downloaded (a parallel download, or an
+    # interruption). Trying to unpack it gives a baffling error, so its
+    # integrity is checked first.
     if (Test-Path $zip) {
         $valid = $false
         try {
@@ -54,18 +55,18 @@ if (-not (Test-Path $gradleBin)) {
             $z.Dispose()
         } catch { $valid = $false }
         if (-not $valid) {
-            Write-Host "Gradle arxivi to'liq emas, qayta yuklanadi"
+            Write-Host "The Gradle archive is incomplete, downloading it again"
             Remove-Item $zip -Force -ErrorAction SilentlyContinue
         }
     }
 
     if (-not (Test-Path $zip)) {
-        Write-Host "Gradle $GradleVersion yuklanmoqda..."
+        Write-Host "Downloading Gradle $GradleVersion..."
         & curl.exe -L --fail --silent --show-error -o $zip $GradleUrl
-        if ($LASTEXITCODE -ne 0) { throw "Gradle yuklab bo'lmadi" }
+        if ($LASTEXITCODE -ne 0) { throw "could not download Gradle" }
     }
 
-    Write-Host "Gradle ochilmoqda..."
+    Write-Host "Unpacking Gradle..."
     $tmp = Join-Path $Root "_gradle_tmp"
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     Expand-Archive -Path $zip -DestinationPath $tmp -Force
@@ -78,15 +79,15 @@ $env:ANDROID_HOME = $sdk
 $env:ANDROID_SDK_ROOT = $sdk
 $env:PATH = "$jdk\bin;$env:PATH"
 
-# Gradle SDK joyini shu fayldan o'qiydi. Fayl loyihaga qo'shilmaydi
-# (.gitignore'da), chunki yo'l har kompyuterda boshqacha.
+# Gradle reads the SDK location from this file. It is not committed
+# (it is in .gitignore), because the path differs on every computer.
 $local = Join-Path $project "local.properties"
 "sdk.dir=$($sdk -replace '\\', '\\')" | Set-Content -Path $local -Encoding ASCII
 
-# Gradle o'ram fayllari (wrapper) bo'lmasa yasab qo'yamiz - shunda
-# loyihani yuklab olgan odam Gradle o'rnatmasdan yig'a oladi.
+# Generate the Gradle wrapper when it is missing, so anyone who clones
+# the project can build without installing Gradle.
 if (-not (Test-Path (Join-Path $project "gradlew.bat"))) {
-    Write-Host "Gradle o'rami yasalmoqda..."
+    Write-Host "Generating the Gradle wrapper..."
     Push-Location $project
     & $gradleBin wrapper --gradle-version $GradleVersion --console=plain
     Pop-Location
@@ -94,13 +95,13 @@ if (-not (Test-Path (Join-Path $project "gradlew.bat"))) {
 
 $task = if ($Release) { "assembleRelease" } else { "assembleDebug" }
 Write-Host ""
-Write-Host "=== Yig'ilmoqda: $task ==="
+Write-Host "=== Building: $task ==="
 
 Push-Location $project
 try {
     if ($Clean) { & $gradleBin clean --console=plain }
     & $gradleBin $task --console=plain
-    if ($LASTEXITCODE -ne 0) { throw "yig'ish muvaffaqiyatsiz (kod $LASTEXITCODE)" }
+    if ($LASTEXITCODE -ne 0) { throw "the build failed (code $LASTEXITCODE)" }
 } finally {
     Pop-Location
 }
@@ -109,9 +110,9 @@ $apk = Get-ChildItem (Join-Path $project "app\build\outputs\apk") -Recurse -Filt
        Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($apk) {
     Write-Host ""
-    Write-Host "=== Tayyor ===" -ForegroundColor Green
+    Write-Host "=== Ready ===" -ForegroundColor Green
     Write-Host "  $($apk.FullName)"
     Write-Host ("  {0:N1} MB" -f ($apk.Length / 1MB))
 } else {
-    Write-Host "APK topilmadi" -ForegroundColor Yellow
+    Write-Host "No APK found" -ForegroundColor Yellow
 }

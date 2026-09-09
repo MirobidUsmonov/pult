@@ -13,19 +13,19 @@ import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 /**
- * Kompyuterdan kelgan bosishlarni telefonda bajaradi.
+ * Carries out on the phone the taps that come from the computer.
  *
- * Android oddiy ilovaga boshqa ilovalar ustiga bosish huquqini bermaydi -
- * bu ataylab qo'yilgan himoya. Yagona ochiq yo'l - maxsus imkoniyatlar
- * (Accessibility) xizmati, uni foydalanuvchi sozlamalardan qo'lda
- * yoqishi kerak. Buni chetlab o'tish mumkin emas.
+ * Android does not give an ordinary app the right to tap on other apps -
+ * a deliberate protection. The one open route is the Accessibility
+ * service, which the user has to turn on by hand in the settings. There
+ * is no way around it.
  */
 public class InputService extends AccessibilityService {
 
     private static final String TAG = "PultInput";
     private static InputService instance;
 
-    /** Xizmat yoqilgan bo'lsa uni qaytaradi, aks holda null. */
+    /** Returns the service when it is on, and null otherwise. */
     public static InputService get() {
         return instance;
     }
@@ -33,8 +33,8 @@ public class InputService extends AccessibilityService {
     private int width = 1080;
     private int height = 2400;
 
-    // Sudrash holati: Android'da sudrash bitta uzluksiz imo-ishora,
-    // bizga esa u bo'laklab keladi (bosildi, surildi, qo'yildi).
+    // The drag state: on Android a drag is one continuous gesture,
+    // while it reaches us in pieces (down, move, up).
     private GestureDescription.StrokeDescription stroke;
     private float lastX, lastY;
 
@@ -43,7 +43,7 @@ public class InputService extends AccessibilityService {
         super.onServiceConnected();
         instance = this;
         measureScreen();
-        Log.i(TAG, "kiritish xizmati yoqildi: " + width + "x" + height);
+        Log.i(TAG, "the input service is on: " + width + "x" + height);
     }
 
     @Override
@@ -54,8 +54,8 @@ public class InputService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        // Hodisalar bizga kerak emas: xizmat faqat imo-ishora yuborish
-        // uchun ishlatiladi.
+        // We have no use for the events: the service is only used to
+        // send gestures.
     }
 
     @Override
@@ -72,7 +72,7 @@ public class InputService extends AccessibilityService {
             width = p.x;
             height = p.y;
         } catch (Exception e) {
-            Log.w(TAG, "ekran o'lchami aniqlanmadi: " + e);
+            Log.w(TAG, "screen size not determined: " + e);
         }
     }
 
@@ -85,7 +85,7 @@ public class InputService extends AccessibilityService {
         return height;
     }
 
-    // ------------------------------------------------------- imo-ishoralar
+    // ----------------------------------------------------------- gestures
 
     private float px(double nx) {
         measureScreen();
@@ -104,7 +104,7 @@ public class InputService extends AccessibilityService {
         dispatch(new GestureDescription.StrokeDescription(p, 0, 60));
     }
 
-    /** Uzoq bosish - kontekst menyusi uchun. */
+    /** A long press, for the context menu. */
     public void longPress(double nx, double ny) {
         float x = px(nx), y = py(ny);
         Path p = new Path();
@@ -112,20 +112,20 @@ public class InputService extends AccessibilityService {
         dispatch(new GestureDescription.StrokeDescription(p, 0, 650));
     }
 
-    /** Ikki marta bosish. */
+    /** A double tap. */
     public void doubleTap(double nx, double ny) {
         tap(nx, ny);
-        // Android ikki bosishni vaqt bo'yicha ajratadi, shuning uchun
-        // ikkinchisini biroz kechiktiramiz
+        // Android tells two taps apart by timing, so the second one is
+        // delayed a little
         new android.os.Handler(getMainLooper()).postDelayed(() -> tap(nx, ny), 90);
     }
 
     /**
-     * Sudrashni boshlaydi.
+     * Starts a drag.
      *
-     * continueStroke bo'lmaganda har bir siljish alohida imo-ishora
-     * bo'lardi va Android ularni sudrash deb qabul qilmasdi - ro'yxat
-     * aylanmas, belgi ko'chmas edi.
+     * Without continueStroke every movement would be a separate gesture
+     * and Android would not read them as a drag - lists did not scroll
+     * and icons did not move.
      */
     public void dragStart(double nx, double ny) {
         float x = px(nx), y = py(ny);
@@ -162,7 +162,7 @@ public class InputService extends AccessibilityService {
         dispatch(last);
     }
 
-    /** Aylantirish: barmoq bilan surish. */
+    /** Scrolling: a swipe with the finger. */
     public void scroll(double amount) {
         measureScreen();
         float cx = width / 2f;
@@ -181,11 +181,11 @@ public class InputService extends AccessibilityService {
             b.addStroke(s);
             dispatchGesture(b.build(), null, null);
         } catch (Exception e) {
-            Log.w(TAG, "imo-ishora yuborilmadi: " + e);
+            Log.w(TAG, "gesture not dispatched: " + e);
         }
     }
 
-    // ------------------------------------------------------- tizim tugmalari
+    // ------------------------------------------------------- system buttons
 
     public boolean global(String name) {
         int action;
@@ -205,15 +205,14 @@ public class InputService extends AccessibilityService {
         return performGlobalAction(action);
     }
 
-    // ------------------------------------------------------------ matn
+    // ------------------------------------------------------------ text
 
     /**
-     * Matnni faol maydonga qo'shadi.
+     * Appends text to the focused field.
      *
-     * Klaviatura hodisasini yuborishning iloji yo'q, shuning uchun
-     * fokusdagi maydonning matni to'g'ridan-to'g'ri o'zgartiriladi.
-     * Bu barcha maydonlarda ham ishlamaydi (masalan o'yinlarda), lekin
-     * oddiy kiritish maydonlari uchun yetarli.
+     * There is no way to send a keyboard event, so the focused field's
+     * text is changed directly. It does not work everywhere (in games,
+     * for instance), but it is enough for ordinary input fields.
      */
     public boolean typeText(String text) {
         AccessibilityNodeInfo node = focusedEditable();

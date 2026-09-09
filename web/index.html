@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="uz">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -19,24 +19,24 @@
   <canvas id="screen" width="16" height="9"></canvas>
   <div id="placeholder">
     <div class="ph-icon"><svg class="ic" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
-    <div class="ph-text" id="phText">Ulanmoqda…</div>
-    <button class="ph-btn" id="phBtn" hidden>Boshlash</button>
-    <!-- Telefon hali ulanmagan bo'lsa QR shu yerning o'zida chiqadi:
-         ko'rish joyi va ulash joyi bitta oyna bo'lsin. -->
+    <div class="ph-text" id="phText">Connecting…</div>
+    <button class="ph-btn" id="phBtn" hidden>Start</button>
+    <!-- With no phone connected yet the QR code appears right here, so
+         watching and pairing live in the same window. -->
     <div id="pairBox" hidden>
       <div id="pairQr"></div>
       <div id="pairLink"></div>
       <div class="pair-acts">
-        <button class="pair-btn" id="pairCopy">Havolani nusxalash</button>
-        <button class="pair-btn" id="pairSend" hidden>Telegramga yuborish</button>
+        <button class="pair-btn" id="pairCopy">Copy the link</button>
+        <button class="pair-btn" id="pairSend" hidden>Send to Telegram</button>
       </div>
       <div id="pairSaid" class="pair-said"></div>
     </div>
   </div>
   <div id="cursorHint"></div>
-  <!-- Ekran ko'rsatkichi. Videoning yon-veridagi qora chekkada turadi:
-       surib ekran almashtiriladi, nuqtalar esa qaysi ekran ochiqligini
-       ko'rsatadi. -->
+  <!-- The screen indicator. It sits in the black margin beside the
+       video: swipe to switch screens, and the dots say which screen is
+       open. -->
   <div id="monbar" hidden></div>
 </div>
 
@@ -45,27 +45,27 @@
   <span id="hostName">Pult</span>
   <span class="spacer"></span>
   <span id="stats" class="muted"></span>
-  <!-- Manba tugmasi: kompyuter <-> telefon. Ulangan telefon bo'lsagina
-       ko'rinadi, shuning uchun odatiy holatda qator to'lib ketmaydi. -->
-  <button id="btnSource" class="chip" hidden title="Manbani almashtirish"></button>
+  <!-- The source button: computer <-> phone. It only appears once a
+       phone is connected, so the bar is not crowded by default. -->
+  <button id="btnSource" class="chip" hidden title="Switch source"></button>
   <button id="btnZoom" class="chip" hidden>1×</button>
-  <!-- Belgilar chiziqli SVG: rang matndan olinadi, emoji kabi har
-       qurilmada boshqacha ko'rinmaydi. -->
-  <button id="btnRotate" class="icon" aria-label="Burish" title="Burish"><svg class="ic" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></button>
-  <button id="btnFull" class="icon" aria-label="To‘liq ekran" title="To‘liq ekran"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
-  <button id="btnSettings" class="icon" aria-label="Sozlamalar" title="Sozlamalar"><svg class="ic" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></button>
+  <!-- The icons are line SVGs: the colour comes from the text, and
+       unlike emoji they do not look different on every device. -->
+  <button id="btnRotate" class="icon" aria-label="Rotate" title="Rotate"><svg class="ic" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></button>
+  <button id="btnFull" class="icon" aria-label="Full screen" title="Full screen"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
+  <button id="btnSettings" class="icon" aria-label="Settings" title="Settings"><svg class="ic" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></button>
 </header>
 
 <footer id="toolbar">
-  <button id="btnMode"  class="tool" title="Boshqaruv usuli"><span></span><i>trackpad</i></button>
-  <!-- O'rta qism ekranlar soniga qarab quriladi: bir nechta ekran
-       bo'lsa - ekran tugmalari, bitta bo'lsa - sichqoncha tugmalari. -->
+  <button id="btnMode"  class="tool" title="Control mode"><span></span><i>trackpad</i></button>
+  <!-- The middle is built from the number of screens: several screens
+       give screen buttons, one screen gives mouse buttons. -->
   <div id="toolMid"></div>
-  <button id="btnKeys"  class="tool" title="Klaviatura"><span><svg class="ic" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg></span><i>klaviatura</i></button>
+  <button id="btnKeys"  class="tool" title="Keyboard"><span><svg class="ic" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg></span><i>keyboard</i></button>
 </footer>
 
-<!-- Maxsus klavishlar. Telefon klaviaturasi bu tugmalarni bermaydi,
-     shuning uchun alohida qator kerak. -->
+<!-- Special keys. The phone keyboard does not offer these, hence a
+     row of their own. -->
 <div id="keyrow" hidden>
   <div class="krow">
     <button class="k mod" data-mod="ctrl">Ctrl</button>
@@ -87,52 +87,52 @@
   </div>
   <div class="krow" id="fnrow"></div>
   <input id="typer" type="text" autocomplete="off" autocorrect="off"
-         autocapitalize="off" spellcheck="false" placeholder="matn yozing…">
+         autocapitalize="off" spellcheck="false" placeholder="type text…">
 </div>
 
 <div id="sheet" hidden>
   <div class="sheet-inner">
     <div class="sheet-head">
-      <strong id="sheetHost">Kompyuter</strong>
+      <strong id="sheetHost">Computer</strong>
       <button class="icon" id="btnCloseSheet">✕</button>
     </div>
 
     <section>
-      <h3>Manba</h3>
+      <h3>Source</h3>
       <div class="row" id="sourceRow"></div>
       <p class="hint" id="sourceHint">
-        Kompyuterga ulangan telefonlar shu yerda ko‘rinadi — ularni ham
-        shu yerdan ko‘rish va boshqarish mumkin.
+        Phones connected to the computer show up here — you can watch
+        and control them from the same place.
       </p>
     </section>
 
     <section id="monitorSection">
-      <h3>Ekran</h3>
+      <h3>Screen</h3>
       <div class="row" id="monitorRow"></div>
       <label class="line">
-        <span>Kursor ekranlar orasida yursin</span>
+        <span>Let the cursor move between screens</span>
         <input type="checkbox" id="chkFollow" checked>
       </label>
-      <button class="btn" id="btnSwapMonitors">Ekranlar almashib qolgan</button>
+      <button class="btn" id="btnSwapMonitors">The screens are swapped</button>
       <p class="hint">
-        Video bitta ekrandan, sichqoncha boshqasidan bo‘lsa shu tugmani
-        bosing — bog‘lanish almashadi va saqlanadi.
+        If the video comes from one screen and the mouse goes to
+        another, press this — the mapping swaps and is saved.
       </p>
     </section>
 
     <section>
-      <h3>Sifat</h3>
+      <h3>Quality</h3>
       <label class="line">
-        <span>Ruxsat</span>
+        <span>Resolution</span>
         <select id="selWidth">
-          <option value="854">854 — tejamkor</option>
-          <option value="1280" selected>1280 — o‘rtacha</option>
-          <option value="1600">1600 — yaxshi</option>
-          <option value="0">To‘liq — eng aniq</option>
+          <option value="854">854 — light</option>
+          <option value="1280" selected>1280 — balanced</option>
+          <option value="1600">1600 — sharp</option>
+          <option value="0">Full — sharpest</option>
         </select>
       </label>
       <label class="line">
-        <span>Kadr/s</span>
+        <span>Frames/s</span>
         <select id="selFps">
           <option value="15">15</option>
           <option value="24">24</option>
@@ -141,58 +141,58 @@
         </select>
       </label>
       <label class="line">
-        <span>Tezlik</span>
+        <span>Bandwidth</span>
         <select id="selBitrate">
-          <option value="1500">1.5 Mbit — mobil internet</option>
-          <option value="4000" selected>4 Mbit — odatiy</option>
+          <option value="1500">1.5 Mbit — mobile data</option>
+          <option value="4000" selected>4 Mbit — default</option>
           <option value="8000">8 Mbit — Wi-Fi</option>
-          <option value="16000">16 Mbit — eng yaxshi</option>
+          <option value="16000">16 Mbit — best</option>
         </select>
       </label>
       <label class="line">
-        <span>Kursor ko‘rinsin</span>
+        <span>Show the cursor</span>
         <input type="checkbox" id="chkCursor" checked>
       </label>
       <label class="line">
-        <span>Sezgirlik</span>
+        <span>Sensitivity</span>
         <input type="range" id="rngSens" min="0.5" max="4" step="0.1" value="1.6">
       </label>
     </section>
 
     <section>
-      <h3>Ko‘rinish</h3>
+      <h3>View</h3>
       <div class="row">
-        <button class="btn" id="btnFit">O‘lchamga solish</button>
-        <button class="btn" id="btnRotate2">Burish</button>
-        <button class="btn" id="btnFull2">To‘liq ekran</button>
+        <button class="btn" id="btnFit">Fit to screen</button>
+        <button class="btn" id="btnRotate2">Rotate</button>
+        <button class="btn" id="btnFull2">Full screen</button>
       </div>
       <label class="line">
-        <span>Telefon tik turganda o‘zi bursin</span>
+        <span>Rotate by itself when the phone is upright</span>
         <input type="checkbox" id="chkAutoRotate" checked>
       </label>
       <p class="hint">
-        Yaqinlashtirish uchun ikki barmoq bilan cho‘zing. Yaqinlashtirilgan
-        holda ikki barmoq bilan surish rasmni siljitadi.
+        Pinch with two fingers to zoom. While zoomed in, dragging with
+        two fingers pans the picture.
       </p>
     </section>
 
     <section>
-      <h3>Buyruqlar</h3>
+      <h3>Commands</h3>
       <div class="row" id="cmdRow"></div>
       <label class="line">
-        <span>Ochish</span>
-        <input type="text" id="runCmd" placeholder="masalan: notepad">
+        <span>Open</span>
+        <input type="text" id="runCmd" placeholder="for example: notepad">
       </label>
-      <button class="btn" id="btnRun">Ishga tushirish</button>
+      <button class="btn" id="btnRun">Run</button>
     </section>
 
     <section>
-      <h3>Ulanish</h3>
-      <div class="kv"><span>Holat</span><b id="infoState">—</b></div>
-      <div class="kv"><span>Kodlagich</span><b id="infoEnc">—</b></div>
-      <div class="kv"><span>O‘lcham</span><b id="infoSize">—</b></div>
-      <div class="kv"><span>Kechikish</span><b id="infoRtt">—</b></div>
-      <button class="btn ghost" id="btnForget">Kalitni o‘chirish</button>
+      <h3>Connection</h3>
+      <div class="kv"><span>State</span><b id="infoState">—</b></div>
+      <div class="kv"><span>Encoder</span><b id="infoEnc">—</b></div>
+      <div class="kv"><span>Size</span><b id="infoSize">—</b></div>
+      <div class="kv"><span>Latency</span><b id="infoRtt">—</b></div>
+      <button class="btn ghost" id="btnForget">Forget the key</button>
     </section>
   </div>
 </div>

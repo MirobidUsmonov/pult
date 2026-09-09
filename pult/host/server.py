@@ -1,9 +1,8 @@
 """
-Mahalliy server: veb-sahifani beradi va WebSocket ulanishini qabul qiladi.
+The local server: serves the web page and accepts WebSocket connections.
 
-Bu "to'g'ridan-to'g'ri" rejim - telefon kompyuterga bevosita ulanadi.
-Hub rejimida ham xuddi shu HostContext ishlatiladi, faqat transport
-boshqacha bo'ladi.
+This is "direct" mode - the phone connects straight to the computer.
+Hub mode uses the very same HostContext; only the transport differs.
 """
 from __future__ import annotations
 
@@ -26,17 +25,17 @@ log = logging.getLogger("pult.server")
 
 
 def web_root() -> Path:
-    """Veb-fayllar papkasi (dastur .exe qilib yig'ilganda ham topiladi)."""
+    """The web assets folder, found in a built .exe as well."""
     if getattr(sys, "frozen", False):
         return Path(getattr(sys, "_MEIPASS", ".")) / "web"
     return Path(__file__).resolve().parents[2] / "web"
 
 
 def _authorized(request: web.Request, token: str) -> bool:
-    """Kalitni tekshiradi.
+    """Checks the key.
 
-    compare_digest ishlatilgan: oddiy == solishtirish javob vaqti orqali
-    kalitni bitta-bitta topib olishga imkon beradi.
+    compare_digest is used on purpose: a plain == comparison leaks the
+    key one character at a time through response timing.
     """
     given = request.query.get("k") or request.headers.get("X-Pult-Key", "")
     if not given:
@@ -57,12 +56,12 @@ class HostServer:
     @staticmethod
     @web.middleware
     async def _no_cache(request: web.Request, handler):
-        """Veb-fayllar keshlanmasin.
+        """Keep the web assets out of the cache.
 
-        Dastur yangilanganda telefon eski sahifani keshdan olib qolardi va
-        yangi imkoniyatlar ko'rinmasdi - buni tushunish qiyin, chunki
-        tashqaridan hech qanday xato ko'rinmaydi. Fayllar mahalliy
-        tarmoqdan kelgani uchun keshdan yutuq deyarli yo'q.
+        After an update the phone kept serving the old page from cache
+        and the new features simply were not there - hard to diagnose,
+        because nothing looks like an error from the outside. The files
+        come over the local network, so caching buys almost nothing.
         """
         response = await handler(request)
         if request.path.startswith("/ws"):
@@ -82,28 +81,28 @@ class HostServer:
         if root.is_dir():
             self.app.router.add_static("/", root, show_index=False)
         else:
-            log.warning("veb papkasi topilmadi: %s", root)
+            log.warning("web folder not found: %s", root)
 
     # -- HTTP --------------------------------------------------------------
 
     async def index_handler(self, request: web.Request) -> web.StreamResponse:
         index = web_root() / "index.html"
         if not index.is_file():
-            return web.Response(text="veb interfeys topilmadi", status=500)
+            return web.Response(text="web interface not found", status=500)
         return web.FileResponse(index, headers={"Cache-Control": "no-cache"})
 
     async def pair_handler(self, request: web.Request) -> web.StreamResponse:
-        """Telefonni ulash sahifasi: QR kod va havola.
+        """The pairing page: QR code and link.
 
-        Kompyuterning o'z brauzerida ochiladi (treydan). Telefon QR ni
-        skanerlaydi - kalitni qo'lda ko'chirish shart emas.
+        Opened in the computer's own browser from the tray. The phone
+        scans the QR code, so the key never has to be copied by hand.
         """
         if not _authorized(request, self.cfg.token):
-            return web.Response(text="kalit kerak", status=401)
+            return web.Response(text="key required", status=401)
         urls = local_addresses(self.cfg.port, self.scheme)
-        # Tunnel ochiq bo'lsa QR kodga o'sha manzil tushadi: bir marta
-        # skanerlangan telefon keyin istalgan tarmoqdan ulanaveradi.
-        # Mahalliy manzillar ro'yxatda qoladi - ular tezroq ishlaydi.
+        # When the tunnel is up its address goes into the QR code: a
+        # phone that scanned it once can connect from any network. The
+        # local addresses stay in the list - they are faster.
         if self.cfg.public_url:
             urls = [self.cfg.public_url.rstrip("/")] + urls
         target = f"{urls[0]}/#k={self.cfg.token}"
@@ -111,15 +110,14 @@ class HostServer:
         return web.Response(text=html, content_type="text/html")
 
     async def pair_json_handler(self, request: web.Request) -> web.StreamResponse:
-        """Ulash uchun QR va havola - asosiy oynaning ichida ko'rsatish uchun.
+        """QR code and link for pairing, shown inside the main window.
 
-        Telefon hali ulanmagan bo'lsa asosiy oyna bo'sh turmasin: QR
-        kod o'sha yerning o'zida chiqadi. Shunda "telefonni qayerda
-        ko'raman" va "qanday ulayman" degan ikkita savol bitta joyda
-        javob topadi.
+        With no phone connected yet the main window should not sit
+        empty: the QR code appears right there. That way "where do I see
+        my phone" and "how do I connect it" are answered in one place.
         """
         if not _authorized(request, self.cfg.token):
-            return web.json_response({"error": "kalit noto'g'ri"}, status=401)
+            return web.json_response({"error": "wrong key"}, status=401)
 
         from .pairing import app_link, qr_svg
 
@@ -135,19 +133,19 @@ class HostServer:
         })
 
     async def pair_send_handler(self, request: web.Request) -> web.StreamResponse:
-        """Ulash havolasini Telegramga yuboradi.
+        """Sends the pairing link to Telegram.
 
-        Kamera bilan QR skanerlash har doim ham qulay emas: kod ekranda
-        kichik bo'lishi, kamera fokusga tushmasligi mumkin. Telegram
-        esa telefonda allaqachon ochiq - havola bir soniyada yetadi va
-        uni ilovaga "Ulashish" orqali berish kifoya.
+        Scanning a QR code is not always convenient: the code may be
+        small on screen, or the camera may refuse to focus. Telegram is
+        already open on the phone - the link arrives in a second and
+        handing it to the app through "Share" is enough.
         """
         if not _authorized(request, self.cfg.token):
-            return web.json_response({"ok": False, "msg": "kalit noto'g'ri"}, status=401)
+            return web.json_response({"ok": False, "msg": "wrong key"}, status=401)
 
         t = self.cfg.telegram
         if not (t.bot_token and t.chat_id):
-            return web.json_response({"ok": False, "msg": "Telegram sozlanmagan"})
+            return web.json_response({"ok": False, "msg": "Telegram is not set up"})
 
         from .. import notify
 
@@ -155,26 +153,26 @@ class HostServer:
             local_addresses(self.cfg.port, self.scheme)[0]
         link = f"{base}/#k={self.cfg.token}&h={self.cfg.host_id}"
         text = (
-            f"🔗 <b>{self.cfg.host_name}</b> — ulash havolasi\n\n"
+            f"<b>{self.cfg.host_name}</b> — pairing link\n\n"
             f"<code>{link}</code>\n\n"
-            "Havolani bosib turing → <b>Ulashish</b> → <b>Pult</b>."
+            "Long-press the link → <b>Share</b> → <b>Pult</b>."
         )
         try:
             await notify.Telegram(t.bot_token, t.chat_id).send(text)
             return web.json_response({"ok": True})
         except Exception as exc:
-            log.warning("ulash havolasi yuborilmadi: %s", exc)
+            log.warning("pairing link not sent: %s", exc)
             return web.json_response({"ok": False, "msg": str(exc)[:120]})
 
     async def cert_handler(self, request: web.Request) -> web.StreamResponse:
-        """Sertifikatni yuklab olish.
+        """Downloading the certificate.
 
-        Telefonga o'rnatib qo'ysa, brauzer har safar ogohlantirish
-        ko'rsatmaydi. Ixtiyoriy qulaylik.
+        Installed on the phone, it stops the browser warning every time.
+        Purely optional convenience.
         """
         path = config_dir() / tls.CERT_NAME
         if not path.is_file():
-            return web.Response(text="sertifikat yo'q", status=404)
+            return web.Response(text="no certificate", status=404)
         return web.FileResponse(
             path,
             headers={
@@ -184,10 +182,11 @@ class HostServer:
         )
 
     async def info_handler(self, request: web.Request) -> web.StreamResponse:
-        """Qisqa ma'lumot. Kalitsiz faqat nom ko'rinadi.
+        """A short summary. Without a key only the name is visible.
 
-        Nomni ochiq qoldirish ataylab: telefon ro'yxatdagi kompyuterlardan
-        qaysi biri onlayn ekanini kalit yubormasdan bilishi uchun.
+        Leaving the name open is deliberate: it lets the phone tell
+        which of the computers in its list are online without sending
+        the key anywhere.
         """
         public = {"name": self.cfg.host_name, "id": self.cfg.host_id, "ok": True}
         if not _authorized(request, self.cfg.token):
@@ -200,8 +199,8 @@ class HostServer:
 
     async def ws_handler(self, request: web.Request) -> web.StreamResponse:
         if not _authorized(request, self.cfg.token):
-            log.warning("noto'g'ri kalit bilan urinish: %s", request.remote)
-            return web.json_response({"error": "kalit noto'g'ri"}, status=401)
+            log.warning("attempt with a wrong key: %s", request.remote)
+            return web.json_response({"error": "wrong key"}, status=401)
 
         ws = web.WebSocketResponse(heartbeat=20, max_msg_size=4 * 1024 * 1024)
         await ws.prepare(request)
@@ -224,21 +223,21 @@ class HostServer:
                     try:
                         data = json.loads(msg.data)
                     except json.JSONDecodeError:
-                        await send_json({"t": "error", "msg": "noto'g'ri JSON"})
+                        await send_json({"t": "error", "msg": "invalid JSON"})
                         continue
                     if isinstance(data, dict):
                         await session.handle(data)
                 elif msg.type == WSMsgType.BINARY:
-                    # Ikkilik ma'lumot faqat manbadan keladi: telefon
-                    # o'z ekranining kadrlarini shu yo'l bilan yuboradi.
+                    # Binary data only ever comes from a source: this
+                    # is how the phone sends its own screen frames.
                     await session.on_binary(msg.data)
                 elif msg.type == WSMsgType.ERROR:
-                    log.info("ws xatosi: %s", ws.exception())
+                    log.info("ws error: %s", ws.exception())
         finally:
             await session.close()
         return ws
 
-    # -- hayot sikli -------------------------------------------------------
+    # -- lifecycle ---------------------------------------------------------
 
     @property
     def scheme(self) -> str:
@@ -253,30 +252,30 @@ class HostServer:
         await self._runner.setup()
         site = web.TCPSite(self._runner, self.cfg.bind, self.cfg.port, ssl_context=ssl_ctx)
         await site.start()
-        log.info("server tinglayapti: %s://%s:%s", self.scheme, self.cfg.bind, self.cfg.port)
+        log.info("server listening: %s://%s:%s", self.scheme, self.cfg.bind, self.cfg.port)
 
-        # Kompyuterning o'zi uchun alohida, oddiy HTTP eshigi.
+        # A separate, plain-HTTP door for the computer itself.
         #
-        # Sababi sertifikat: mahalliy tarmoq uchun u o'z-o'zini
-        # imzolagan bo'lgani uchun brauzer har safar ogohlantiradi va
-        # dastur "shubhali sayt" bo'lib ko'rinadi. 127.0.0.1 esa
-        # brauzer uchun baribir xavfsiz manzil hisoblanadi - video
-        # dekodlash (WebCodecs) u yerda HTTPS'siz ham ishlaydi.
+        # The reason is the certificate: on the local network it is
+        # self-signed, so the browser warns every time and the program
+        # looks like a suspicious website. 127.0.0.1 counts as a secure
+        # address anyway, so video decoding (WebCodecs) works there
+        # without HTTPS.
         #
-        # Faqat 127.0.0.1 ga bog'lanadi, tarmoqqa chiqmaydi. Kalit esa
-        # baribir tekshiriladi.
+        # It binds to 127.0.0.1 only and never reaches the network. The
+        # key is still checked.
         if ssl_ctx is not None:
             try:
                 local = web.TCPSite(self._runner, "127.0.0.1", self.local_port)
                 await local.start()
-                log.info("mahalliy eshik: http://127.0.0.1:%s", self.local_port)
+                log.info("local door: http://127.0.0.1:%s", self.local_port)
             except OSError as exc:
-                # Bu qo'shimcha qulaylik - band bo'lsa dastur ishlayveradi
-                log.warning("mahalliy eshik ochilmadi (%s): %s", self.local_port, exc)
+                # A convenience only - if the port is taken, carry on
+                log.warning("local door not opened (%s): %s", self.local_port, exc)
 
     @property
     def local_port(self) -> int:
-        """Kompyuterning o'zi uchun HTTP porti."""
+        """The HTTP port for the computer itself."""
         return self.cfg.local_port or self.cfg.port + 1
 
     async def stop(self) -> None:

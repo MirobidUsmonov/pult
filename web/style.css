@@ -1,14 +1,15 @@
 /*
- * Pult - ko'rinish.
+ * Pult - the look.
  *
- * Ish asbobi uchun dizayn: tinch, yassi, aniq. Bezak yo'q - blur,
- * gradient, yorug'lik, soya ishlatilmaydi. Ierarxiya effekt bilan
- * emas, o'lcham, og'irlik va joy bilan quriladi. Yuzalar uch qatlam
- * (s0 < s1 < s2, yuqorisi ozgina ochroq), chegara bitta va ingichka,
- * urg'u rangi bitta va qattiq. Burchaklar 6/8/12 px.
+ * Designed like a tool: quiet, flat, precise. No decoration - no blur,
+ * no gradients, no glow, no shadows. Hierarchy is built from size,
+ * weight and space rather than from effects. Three surface layers
+ * (s0 < s1 < s2, each slightly lighter), one thin border, one firm
+ * accent colour. Corners are 6/8/12 px.
  *
- * Bitta sahifa ikki joyda ochiladi: telefonda (barmoq) va kompyuter
- * oynasida (sichqoncha). Farqlar oxiridagi @media bo'limida.
+ * The same page opens in two places: on a phone (a finger) and in a
+ * computer window (a mouse). The differences live in the @media block
+ * at the end.
  */
 
 :root {
@@ -35,7 +36,7 @@
   --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
 }
 
-/* Eski nomlar - boshqa joylar ishlatadi */
+/* Older names, still used elsewhere */
 :root { --bg: var(--s0); --panel: var(--s1); --panel-2: var(--s2); }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -59,7 +60,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   outline-offset: 1px;
 }
 
-/* Chiziqli belgilar: rang matndan olinadi */
+/* Line icons: the colour comes from the text */
 svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; display: block; }
 
 /* ---------- yuqori qator ---------- */
@@ -125,7 +126,7 @@ svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-wid
   color: var(--muted);
 }
 
-/* ---------- ekran ---------- */
+/* ---------- the screen ---------- */
 
 #stage {
   position: fixed;
@@ -140,10 +141,10 @@ svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-wid
   justify-content: center;
 }
 
-/* Kanvas oqimdan chiqarilgan va markazga qo'yilgan: o'lchami va burilishi
-   JavaScript'da aniq hisoblanadi. Flex bilan markazlashtirishdan voz
-   kechildi, chunki burilgan element flex ichida bir tomonga siljib
-   ketadi va bosish koordinatalari buziladi. */
+/* The canvas is taken out of the flow and centred: its size and
+   rotation are computed exactly in JavaScript. Centring with flex was
+   dropped, because a rotated element drifts to one side inside a flex
+   container and the click coordinates go wrong. */
 #screen {
   position: absolute;
   left: 50%;
@@ -155,7 +156,7 @@ svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-wid
 }
 #screen.hidden { visibility: hidden; }
 
-/* Ekran yo'q holat */
+/* The no-screen state */
 #placeholder {
   position: absolute;
   inset: 0;
@@ -181,7 +182,7 @@ svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-wid
 }
 .ph-btn:hover { background: var(--accent-hi); }
 
-/* Ekran ko'rsatkichi va almashtirgichi */
+/* The screen indicator and switcher */
 #monbar {
   position: absolute;
   top: 6px;
@@ -194,8 +195,8 @@ svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-wid
   border-radius: var(--r);
   background: var(--s1);
   border: 1px solid var(--line);
-  /* Odatda umuman ko'rinmaydi: ekran tugmalari pastki qatorda bor,
-     bu esa faqat almashtirilganda qisqa vaqt chiqadigan tasdiq. */
+  /* Normally invisible: the screen buttons live in the bottom row, and
+     this is only a brief confirmation shown when they are switched. */
   opacity: 0;
   transition: opacity .2s;
   z-index: 5;
@@ -216,7 +217,7 @@ svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-wid
   background: var(--accent);
 }
 
-/* Trackpad rejimida barmoq qayerga tegayotganini ko'rsatuvchi nuqta */
+/* The dot showing where the finger is touching in trackpad mode */
 #cursorHint {
   position: absolute;
   width: 32px; height: 32px;
@@ -228,8 +229,8 @@ svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-wid
   transition: opacity .15s;
 }
 #cursorHint.show { opacity: .9; }
-/* Ushlab turilgan holat: rang o'zgaradi va barmoq ko'tarilguncha
-   ekranda qoladi - foydalanuvchi ushlaganini bilib tursin. */
+/* The held state: the colour changes and it stays on screen until the
+   finger lifts, so the user can tell they are holding something. */
 #cursorHint.grab {
   border-color: var(--ok);
   width: 38px;
@@ -325,13 +326,13 @@ svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-wid
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   color: var(--text);
-  font-size: 16px; /* 16px dan kichik bo'lsa iOS sahifani kattalashtiradi */
+  font-size: 16px; /* anything smaller and iOS zooms the page in */
   outline: none;
 }
 #typer:focus { border-color: var(--accent); }
 #typer::placeholder { color: var(--dim); }
 
-/* ---------- sozlamalar oynasi ---------- */
+/* ---------- the settings sheet ---------- */
 
 #sheet {
   position: fixed;
@@ -412,7 +413,7 @@ svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-wid
 }
 .kv b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
 
-/* ---------- xabar ---------- */
+/* ---------- the toast ---------- */
 
 #toast {
   position: fixed;
@@ -432,10 +433,10 @@ svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-wid
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
-/* ---------- oyna ichidagi ulash (QR) ---------- */
+/* ---------- in-window pairing (QR) ---------- */
 
-/* Telefon ulanmaganda asosiy oynaning o'zida ko'rinadi. Alohida
-   karta emas - QR shunchaki matn ostida turadi. */
+/* Shown inside the main window while no phone is connected. Not a
+   card of its own - the QR code simply sits under the text. */
 #pairBox {
   display: flex; flex-direction: column; align-items: center; gap: 12px;
   margin-top: 8px;
@@ -458,17 +459,17 @@ svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-wid
 .pair-said { min-height: 16px; font-size: 12px; color: var(--ok); }
 .pair-said.bad { color: var(--bad); }
 
-/* ---------- kompyuter brauzeri ---------- */
+/* ---------- the desktop browser ---------- */
 
-/* Sahifa telefonda ham, monitorda ham ochiladi. Monitorda barmoq
-   uchun qilingan qismlar ortiqcha: pastdagi tugmalar qatori sichqoncha
-   bilan ishlaganda faqat joyni egallaydi, klavishlar qatori esa
-   haqiqiy klaviatura borida umuman kerak emas.
+/* The page opens both on a phone and on a monitor. On a monitor the
+   parts made for a finger are in the way: the bottom button row only
+   takes up space when working with a mouse, and the key row is
+   pointless next to a real keyboard.
 
-   Buni JavaScript emas, @media hal qiladi: oyna o'lchami o'zgarganda
-   qoida o'zi qayta hisoblanadi. Bir marta hisoblab, sinfni body'ga
-   yozib qo'yish ishonchsiz - sahifa yuklanayotgan paytda o'lcham hali
-   noto'g'ri bo'lishi mumkin va rejim shu xato bilan qotib qoladi. */
+   @media decides this, not JavaScript: the rule recomputes itself when
+   the window is resized. Working it out once and writing a class onto
+   body is unreliable - while the page is still loading the size can be
+   wrong, and the mode then sticks with that mistake. */
 @media (pointer: fine) and (min-width: 700px) {
   #toolbar,
   #keyrow { display: none; }
@@ -477,7 +478,7 @@ svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-wid
 
   .ph-text { max-width: 460px; font-size: 14px; }
 
-  /* Sozlamalar oynasi kompyuterda pastdan emas, o'rtadan chiqadi */
+  /* On a computer the settings sheet comes from the centre, not the bottom */
   #sheet { align-items: center; justify-content: center; }
   .sheet-inner {
     width: min(540px, 92vw);

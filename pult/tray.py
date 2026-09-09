@@ -1,10 +1,9 @@
 """
-Trey ikonkasi - dasturning konsolsiz ko'rinishi.
+The tray icon - the program's console-free face.
 
-Bu Pult'ning odatiy ishga tushish usuli: terminal oynasi ochilmaydi,
-soat yonidagi kichik ikonka bilan boshqariladi. Server alohida oqimda
-ishlaydi, ikonka esa asosiy oqimda - Windows'da trey ikonkasi shunday
-talab qiladi.
+This is how Pult normally starts: no terminal window, driven from a
+small icon next to the clock. The server runs on its own thread and the
+icon on the main one, which is what a Windows tray icon requires.
 """
 from __future__ import annotations
 
@@ -30,7 +29,7 @@ def _icon_image():
         path = _web_icons() / name
         if path.is_file():
             return Image.open(path).convert("RGBA")
-    # Ikonka fayli topilmasa ham dastur ishlashi kerak
+    # The program must run even when the icon file is missing
     return Image.new("RGBA", (64, 64), (77, 163, 255, 255))
 
 
@@ -49,11 +48,11 @@ def _open_path(path: Path) -> None:
         else:
             subprocess.Popen(["xdg-open", str(path)])
     except Exception:
-        log.exception("ochib bo'lmadi: %s", path)
+        log.exception("could not open: %s", path)
 
 
 def _copy(text: str) -> None:
-    """Matnni almashish buferiga qo'yadi (tashqi kutubxonasiz)."""
+    """Puts text on the clipboard (without an external library)."""
     if sys.platform != "win32":
         return
     import ctypes
@@ -88,12 +87,12 @@ class TrayApp:
         self.ready = threading.Event()
         self.error: BaseException | None = None
         self.icon = None
-        # Yangilanish qo'llangan bo'lsa - chiqqandan keyin ishga
-        # tushiriladigan fayl. Server to'xtamasdan turib ishga
-        # tushirsak yangi nusxa portni band topardi.
+        # When an update has been applied, the file to start after
+        # quitting. Started before the server stops, the new copy would
+        # find the port taken.
         self.relaunch: Path | None = None
 
-    # -- server oqimi ------------------------------------------------------
+    # -- the server thread -------------------------------------------------
 
     def _run_server(self) -> None:
         self.loop = asyncio.new_event_loop()
@@ -101,9 +100,9 @@ class TrayApp:
         self.stop_event = asyncio.Event()
         try:
             self.loop.run_until_complete(self._serve())
-        except BaseException as exc:  # noqa: BLE001 - xatoni ikonkaga uzatamiz
+        except BaseException as exc:  # noqa: BLE001 - pass the error to the icon
             self.error = exc
-            log.exception("server to'xtadi")
+            log.exception("the server stopped")
             self.ready.set()
         finally:
             try:
@@ -114,15 +113,15 @@ class TrayApp:
     async def _serve(self) -> None:
         server = appmod.build_server(self.cfg)
         await server.start()
-        # Ikonka server ko'tarilishi bilan chiqadi: tunnel ochilishini
-        # kutish bir necha soniya olishi mumkin va bu vaqtda dastur
-        # ishga tushmagandek ko'rinardi.
+        # The icon appears as soon as the server is up: waiting for the
+        # tunnel can take several seconds, and during that time the
+        # program looked like it had not started.
         self.ready.set()
         tun = await appmod.start_remote(self.cfg)
         tracker = asyncio.create_task(appmod.track_public_url(self.cfg, tun)) if tun else None
         notifier = appmod.start_notifier(self.cfg, tun)
         updater = self._start_updater(server)
-        log.info("Pult treyda ishlayapti - %s", appmod.phone_url(self.cfg))
+        log.info("Pult is running in the tray - %s", appmod.phone_url(self.cfg))
         try:
             assert self.stop_event
             await self.stop_event.wait()
@@ -135,11 +134,11 @@ class TrayApp:
             await server.stop()
 
     def _start_updater(self, server) -> asyncio.Task | None:
-        """Ishlab turganda yangilanishni kuzatadi.
+        """Watches for updates while running.
 
-        Yangilanish faqat hech kim ulanmagan paytda qo'llanadi - oqim
-        o'rtasida uzilib qolish yangilanishdan yomonroq. Yangi nusxa
-        ishga tushgach bu nusxa treydan chiqadi.
+        An update is only applied while nobody is connected - dropping
+        out mid-stream is worse than staying on the old version. Once
+        the new copy starts, this one leaves the tray.
         """
         if not getattr(sys, "frozen", False):
             return None
@@ -160,7 +159,7 @@ class TrayApp:
             name="pult-update",
         )
 
-    # -- menyu -------------------------------------------------------------
+    # -- the menu ----------------------------------------------------------
 
     def _menu(self):
         import pystray
@@ -171,37 +170,37 @@ class TrayApp:
         return pystray.Menu(
             pystray.MenuItem(self.cfg.host_name, None, enabled=False),
             pystray.Menu.SEPARATOR,
-            # Belgini bosganda ochiladigan asosiy oyna - telefon shu
-            # yerda ko'rinadi. Ilgari asosiy amal QR sahifasi edi va
-            # odam telefonni ko'radigan joyni topa olmasdi.
-            item("Pult oynasi", self.open_viewer, default=True),
-            item("Telefonni ulash (QR)", self.open_pair),
-            item("Havolani nusxalash", self.copy_link),
+            # The main window, opened by clicking the icon - this is
+            # where the phone appears. The default action used to be the
+            # QR page, and people could not find where to see the phone.
+            item("Pult window", self.open_viewer, default=True),
+            item("Connect a phone (QR)", self.open_pair),
+            item("Copy the link", self.copy_link),
             pystray.Menu.SEPARATOR,
-            item("Hozir yangilash", self.update_now),
-            item("Loglar", lambda: _open_path(cfgmod.log_path())),
-            item("Sozlamalar papkasi", lambda: _open_path(cfgmod.config_dir())),
+            item("Update now", self.update_now),
+            item("Logs", lambda: _open_path(cfgmod.log_path())),
+            item("Settings folder", lambda: _open_path(cfgmod.config_dir())),
             pystray.Menu.SEPARATOR,
-            item("Chiqish", self.quit),
+            item("Quit", self.quit),
         )
 
     def open_pair(self) -> None:
         window.open_url(appmod.pair_url(self.cfg), size=(560, 780))
 
     def open_viewer(self) -> None:
-        """Telefon ekranini kompyuterda alohida oynada ochadi."""
+        """Opens the phone screen in its own window on the computer."""
         window.open_url(appmod.viewer_url(self.cfg), size=(980, 720))
 
     def update_now(self) -> None:
-        """Yangilanishni darhol tekshiradi - vaqtini kutmasdan."""
+        """Checks for an update at once, without waiting for its turn."""
         from . import update as updatemod
 
         if not getattr(sys, "frozen", False):
-            self.notify("Yangilash faqat yig'ilgan dasturda ishlaydi")
+            self.notify("Updating only works in a built program")
             return
         if (self.cfg.update.mode or "off").lower() in ("off", "", "none"):
-            self.notify("Yangilash sozlanmagan",
-                        "Sozlash:  Pult.exe --update <papka yoki havola>")
+            self.notify("Updating is not set up",
+                        "Set it up:  Pult.exe --update <folder or link>")
             return
         if not self.loop:
             return
@@ -211,22 +210,23 @@ class TrayApp:
                 self.relaunch = updatemod.running_exe()
                 self.quit()
             else:
-                self.notify("Yangilanish yo'q", updatemod.stamp())
+                self.notify("No update available", updatemod.stamp())
 
         asyncio.run_coroutine_threadsafe(run(), self.loop)
 
     def copy_link(self) -> None:
         url = appmod.phone_url(self.cfg)
         _copy(url)
-        # Qaysi havola nusxalanganini aytish muhim: mahalliy havola
-        # boshqa tarmoqdan ochilmaydi va buni oldindan bilgan yaxshi.
+        # Saying which link was copied matters: a local link will not
+        # open from another network, and it is better to know that in
+        # advance.
         if self.cfg.public_url:
-            self.notify("Tashqi havola nusxalandi", url)
+            self.notify("Remote link copied", url)
         elif self.cfg.remote.mode != "off":
-            self.notify("Mahalliy havola nusxalandi",
-                        f"Tashqi manzil hali tayyor emas. {url}")
+            self.notify("Local link copied",
+                        f"The remote address is not ready yet. {url}")
         else:
-            self.notify("Havola nusxalandi (faqat shu Wi-Fi)", url)
+            self.notify("Link copied (this Wi-Fi only)", url)
 
     def notify(self, title: str, message: str = "") -> None:
         try:
@@ -241,14 +241,14 @@ class TrayApp:
         if self.icon:
             self.icon.stop()
 
-    # -- ishga tushirish ---------------------------------------------------
+    # -- startup -----------------------------------------------------------
 
     def run(self) -> int:
         import pystray
 
         thread = threading.Thread(target=self._run_server, name="pult-server", daemon=True)
         thread.start()
-        # Server ko'tarilishini kutamiz: xato bo'lsa ikonka ko'rsatmaymiz
+        # Wait for the server: on an error we show no icon at all
         self.ready.wait(timeout=30)
         if self.error is not None:
             self._show_error(str(self.error))
@@ -261,26 +261,26 @@ class TrayApp:
         )
         self.icon.run()
 
-        # Server to'xtadi, port bo'shadi - endi yangi nusxani ishga
-        # tushirsa bo'ladi
+        # The server has stopped and the port is free - now the new copy
+        # can be started
         if self.relaunch is not None:
             thread.join(timeout=10)
             from . import update as updatemod
 
-            log.info("yangilangan nusxa ishga tushirilmoqda")
+            log.info("starting the updated copy")
             updatemod.relaunch(self.relaunch)
         return 0
 
     def _show_error(self, message: str) -> None:
-        """Konsol yo'q bo'lgani uchun xatoni oyna bilan ko'rsatamiz."""
-        log.error("ishga tushmadi: %s", message)
+        """There is no console, so errors are shown in a message box."""
+        log.error("did not start: %s", message)
         if sys.platform == "win32":
             import ctypes
 
             ctypes.WinDLL("user32").MessageBoxW(
                 None,
-                f"{message}\n\nBatafsil: {cfgmod.log_path()}",
-                "Pult ishga tushmadi",
+                f"{message}\n\nDetails: {cfgmod.log_path()}",
+                "Pult did not start",
                 0x10,  # MB_ICONERROR
             )
 

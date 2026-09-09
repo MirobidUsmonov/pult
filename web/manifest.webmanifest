@@ -1,7 +1,7 @@
 {
   "name": "Pult",
   "short_name": "Pult",
-  "description": "Telefondan kompyuterni boshqarish",
+  "description": "Control your computer from your phone",
   "start_url": ".",
   "scope": ".",
   "display": "fullscreen",

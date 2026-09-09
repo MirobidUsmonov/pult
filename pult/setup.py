@@ -1,19 +1,17 @@
 """
-O'rnatish: bitta faylni ochish bilan hammasini sozlash.
+Installation: one file to open, everything set up.
 
-Maqsad - yangi kompyuterga Pult qo'yish uchun bitta fayldan boshqa
-hech narsa kerak bo'lmasin. Python o'rnatish, ffmpeg izlash,
-cloudflared yuklab olish, vazifa rejalashtiruvchisini ochish - bularning
-hammasi shu yerda avtomatlashtirilgan.
+The goal is that putting Pult on a new computer needs nothing but a
+single file. Installing Python, hunting for ffmpeg, downloading
+cloudflared, opening Task Scheduler - all of it is automated here.
 
-Dastur o'zini bir marta doimiy joyga ko'chiradi va o'sha yerdan ishlaydi.
-Ko'chirish shart: odam faylni Yuklamalar papkasidan ishga tushiradi,
-keyin uni o'chiradi yoki ko'chiradi va avtomatik ishga tushirish
-buziladi.
+The program copies itself once into a permanent place and runs from
+there. Copying is necessary: people start the file from Downloads, then
+delete or move it, and automatic startup breaks.
 
-Sozlamalar dastur yonidagi "data" papkasida saqlanadi. Bu ataylab:
-ba'zi muhitlarda AppData boshqa papkaga yo'naltiriladi va shunda
-ikkita alohida sozlama paydo bo'lib, kalitlar mos kelmay qoladi.
+Settings live in a "data" folder next to the program. That is
+deliberate: in some environments AppData is redirected elsewhere, and
+then two separate settings appear and the keys no longer match.
 """
 from __future__ import annotations
 
@@ -30,7 +28,7 @@ log = logging.getLogger("pult.setup")
 TASK_NAME = "Pult"
 EXE_NAME = "Pult.exe"
 
-# Konsol oynasi ochilmasligi kerak
+# No console window may appear
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
@@ -40,7 +38,7 @@ def install_dir() -> Path:
 
 
 def frozen_exe() -> Path | None:
-    """Ishlab turgan .exe. Manba kodidan ishga tushirilgan bo'lsa - None."""
+    """The running .exe, or None when started from source."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve()
     return None
@@ -52,7 +50,7 @@ def is_installed() -> bool:
 
 
 def bundled(name: str) -> Path | None:
-    """.exe ichiga qo'shilgan yordamchi faylni topadi."""
+    """Finds a helper file bundled inside the .exe."""
     base = getattr(sys, "_MEIPASS", None)
     if not base:
         return None
@@ -61,11 +59,10 @@ def bundled(name: str) -> Path | None:
 
 
 def preset() -> dict:
-    """Yig'ishda ichiga solingan tayyor sozlamalar.
+    """Ready-made settings baked in at build time.
 
-    Birinchi kompyuterda sozlangan Telegram boti va tunnel rejimi
-    shu yo'l bilan ikkinchi kompyuterga o'tadi - u yerda hech narsa
-    sozlash kerak bo'lmaydi.
+    The Telegram bot and tunnel mode set up on the first computer travel
+    to the second one this way, so nothing has to be configured there.
     """
     path = bundled("preset.json")
     if not path:
@@ -73,12 +70,12 @@ def preset() -> dict:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        log.warning("preset.json o'qilmadi", exc_info=True)
+        log.warning("preset.json could not be read", exc_info=True)
         return {}
 
 
 def message(text: str, title: str = "Pult", icon: int = 0x40) -> None:
-    """Xabar oynasi. Konsol yo'q, shuning uchun print bermaydi."""
+    """A message box. There is no console, so print would go nowhere."""
     if sys.platform == "win32":
         import ctypes
 
@@ -96,13 +93,13 @@ def ask(text: str, title: str = "Pult") -> bool:
     return ctypes.WinDLL("user32").MessageBoxW(None, text, title, 0x21) == 1
 
 
-# ------------------------------------------------------------ vazifa
+# ------------------------------------------------------- scheduled task
 
 def _powershell(script: str) -> subprocess.CompletedProcess:
-    """PowerShell buyrug'ini konsolsiz bajaradi.
+    """Runs a PowerShell command with no console.
 
-    -Command ishlatiladi, skript fayli emas: skript fayllariga
-    qo'yiladigan ishga tushirish siyosati bu yo'lga tegmaydi.
+    -Command is used rather than a script file: the execution policy
+    that applies to script files does not get in the way here.
     """
     return subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive",
@@ -118,18 +115,18 @@ def _ps_quote(text: str) -> str:
 
 
 def register_task(exe: Path) -> bool:
-    """Kirganda avtomatik ishga tushirishni qo'shadi.
+    """Adds automatic startup at logon.
 
-    Vazifa ataylab oddiy foydalanuvchi huquqi bilan va "kirganda"
-    yaratiladi. Sababi Windows'da sichqoncha va klaviatura hodisalarini
-    yuborish uchun dastur foydalanuvchi seansida ishlashi shart. Xizmat
-    sifatida qo'yilsa u 0-seansda qoladi va ish stoliga umuman ta'sir
-    qilolmaydi - bu ko'p odam qoqiladigan joy.
+    The task is deliberately created with ordinary user rights and an
+    "at logon" trigger. The reason is that on Windows a program must run
+    inside the user's session to send mouse and keyboard events. Set up
+    as a service it stays in session 0 and cannot touch the desktop at
+    all - a place many people trip over.
 
-    Register-ScheduledTask ishlatiladi, schtasks.exe emas: sinovda
-    schtasks "Access is denied" berdi, PowerShell orqali esa o'sha
-    vazifa muammosiz yaratildi. schtasks baribir zaxira yo'l sifatida
-    qoldirilgan - boshqa kompyuterda teskarisi bo'lishi mumkin.
+    Register-ScheduledTask is used rather than schtasks.exe: in testing
+    schtasks returned "Access is denied" while the very same task went
+    in fine through PowerShell. schtasks is still kept as a fallback -
+    another computer may behave the other way round.
     """
     if sys.platform != "win32":
         return False
@@ -141,8 +138,9 @@ def register_task(exe: Path) -> bool:
         "$u=\"$env:USERDOMAIN\\$env:USERNAME\";"
         "$a=New-ScheduledTaskAction -Execute $exe -WorkingDirectory $dir;"
         "$t=New-ScheduledTaskTrigger -AtLogOn -User $u;"
-        # Tarmoq ko'tarilishini kutamiz: dastur IP manzil berilmasidan
-        # oldin ishga tushsa, sertifikatni noto'g'ri manzil bilan yasaydi
+        # Wait for the network: started before an IP address is
+        # assigned, the program builds its certificate for a wrong
+        # address
         "$t.Delay='PT15S';"
         "$s=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries"
         " -DontStopIfGoingOnBatteries -StartWhenAvailable"
@@ -152,13 +150,13 @@ def register_task(exe: Path) -> bool:
         " -RunLevel Limited;"
         f"Register-ScheduledTask -TaskName {_ps_quote(TASK_NAME)} -Action $a"
         " -Trigger $t -Settings $s -Principal $p"
-        " -Description 'Pult - telefondan kompyuterni boshqarish agenti'"
+        " -Description 'Pult - control your computer from your phone'"
         " -Force | Out-Null"
     )
     r = _powershell(script)
     if r.returncode == 0:
         return True
-    log.warning("vazifa PowerShell orqali yaratilmadi: %s",
+    log.warning("task not created through PowerShell: %s",
                 (r.stderr or r.stdout).strip()[:300])
 
     fallback = subprocess.run(
@@ -169,18 +167,18 @@ def register_task(exe: Path) -> bool:
     )
     if fallback.returncode == 0:
         return True
-    log.warning("vazifa schtasks orqali ham yaratilmadi: %s",
+    log.warning("task not created through schtasks either: %s",
                 (fallback.stderr or fallback.stdout).strip()[:300])
     return False
 
 
 def create_shortcut(exe: Path) -> bool:
-    """Ish stoliga dasturning yorlig'ini qo'yadi.
+    """Puts a shortcut to the program on the desktop.
 
-    Yorliq o'rnatgichning o'rnini egallaydi: o'rnatgich bir marta
-    kerak bo'ladi, dastur esa doim. Bosilganda Pult oynasi ochiladi -
-    dastur allaqachon fonda ishlayotgani uchun ikkinchi nusxa
-    ko'tarilmaydi, shunchaki oyna chiqadi.
+    The shortcut takes the installer's place: the installer is needed
+    once, the program always. Clicking it opens the Pult window - the
+    program is already running in the background, so no second copy
+    starts, the window simply appears.
     """
     if sys.platform != "win32":
         return False
@@ -192,12 +190,12 @@ def create_shortcut(exe: Path) -> bool:
         f"$s.TargetPath={_ps_quote(exe)};"
         f"$s.WorkingDirectory={_ps_quote(exe.parent)};"
         f"$s.IconLocation={_ps_quote(exe)};"
-        "$s.Description='Pult - telefon va kompyuter';"
+        "$s.Description='Pult - your phone and your computer';"
         "$s.Save()"
     )
     r = _powershell(script)
     if r.returncode != 0:
-        log.warning("yorliq yaratilmadi: %s", (r.stderr or r.stdout).strip()[:200])
+        log.warning("shortcut not created: %s", (r.stderr or r.stdout).strip()[:200])
         return False
     return True
 
@@ -214,20 +212,21 @@ def remove_task() -> None:
                        capture_output=True, creationflags=NO_WINDOW)
 
 
-# ------------------------------------------------------------ o'rnatish
+# ---------------------------------------------------------- installation
 
 def existing_config() -> Path | None:
-    """Shu kompyuterda ilgari sozlangan Pult'ni topadi.
+    """Finds a Pult already configured on this computer.
 
-    Bu muhim: kalit va sertifikat kompyuterning "shaxsi" hisoblanadi va
-    telefonda saqlangan. Agar o'rnatgich yangisini yaratsa, telefon
-    o'sha kompyuterni tanimay qoladi - ulanish 401 beradi, sertifikat
-    esa "o'zgargan" deb ko'rinadi. Buni foydalanuvchi tushunolmaydi:
-    tashqaridan hech narsa o'zgarmagan, lekin ishlamay qolgan.
+    This matters: the key and the certificate are the computer's
+    identity, and the phone has them stored. If the installer made new
+    ones, the phone would stop recognising that computer - the
+    connection returns 401 and the certificate looks "changed". The user
+    has no way to make sense of that: nothing changed on the outside,
+    yet it stopped working.
     """
     candidates: list[Path] = []
 
-    # Avvalgi avtomatik ishga tushirish qayerni ko'rsatayotganini so'raymiz
+    # Ask where the previous startup entry points
     if sys.platform == "win32":
         r = _powershell(
             f"(Get-ScheduledTask -TaskName {_ps_quote(TASK_NAME)} "
@@ -238,8 +237,9 @@ def existing_config() -> Path | None:
             if not line:
                 continue
             exe = Path(line)
-            # pythonw.exe bo'lsa yonida sozlama yo'q - argumentdagi
-            # loyiha papkasini bilmaymiz, shuning uchun o'tkazamiz
+            # With pythonw.exe there is no settings folder beside it -
+            # we do not know the project folder from the arguments, so
+            # skip it
             if exe.name.lower().startswith("python"):
                 continue
             candidates.append(exe.parent / "data")
@@ -255,15 +255,15 @@ def existing_config() -> Path | None:
 
 
 def adopt(source: Path, data: Path) -> bool:
-    """Eski sozlamadan kompyuterning "shaxsini" ko'chiradi.
+    """Copies the computer's identity out of the old settings.
 
-    Faqat kalit, raqam, nom va sertifikat ko'chiriladi - qolgan
-    sozlamalar yangisiniki bo'lib qolaveradi.
+    Only the key, the id, the name and the certificate are carried over;
+    every other setting stays as the new one has it.
     """
     try:
         old = json.loads((source / "config.json").read_text(encoding="utf-8"))
     except Exception:
-        log.warning("eski sozlama o'qilmadi: %s", source, exc_info=True)
+        log.warning("old settings could not be read: %s", source, exc_info=True)
         return False
 
     target = data / "config.json"
@@ -277,7 +277,7 @@ def adopt(source: Path, data: Path) -> bool:
             new[field] = old[field]
     target.write_text(json.dumps(new, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    # Sertifikat ham o'sha bo'lishi kerak: telefon uning izini saqlagan
+    # The certificate has to stay the same too: the phone stored its fingerprint
     for name in ("cert.pem", "key.pem"):
         src = source / name
         if src.is_file():
@@ -286,15 +286,15 @@ def adopt(source: Path, data: Path) -> bool:
 
 
 def stop_running(target_dir: Path) -> None:
-    """O'sha papkadan ishlab turgan hamma narsani to'xtatadi.
+    """Stops everything running out of that folder.
 
-    Windows ishlab turgan .exe ustiga yozishga ruxsat bermaydi, shuning
-    uchun qayta o'rnatish oldin uni to'xtatmasa "Access is denied"
-    beradi. Bu qayta o'rnatishda doim uchraydigan holat: dastur
-    avtomatik ishga tushgan va o'sha payt ishlab turibdi.
+    Windows will not let a running .exe be overwritten, so a reinstall
+    that does not stop it first gets "Access is denied". This happens on
+    every reinstall: the program started automatically and is running
+    right then.
 
-    cloudflared ham to'xtatiladi - u dastur ishga tushirgan yordamchi
-    va yangi nusxa o'zinikini ochadi.
+    cloudflared is stopped too - it is a helper the program started, and
+    the new copy opens its own.
     """
     if sys.platform != "win32":
         return
@@ -314,12 +314,12 @@ def stop_running(target_dir: Path) -> None:
 
 
 def _replace_exe(src: Path, target: Path) -> None:
-    """Dastur faylini almashtiradi, band bo'lsa ham.
+    """Replaces the program file, even while it is busy.
 
-    Jarayon to'xtatilgach ham fayl bir necha yuz millisekund band
-    qolishi mumkin, shuning uchun bir necha marta urinamiz. Baribir
-    bo'lmasa eskisini chetga suramiz: Windows ishlab turgan faylni
-    o'chirishga ruxsat bermaydi, lekin NOMINI O'ZGARTIRISHGA beradi.
+    A file can stay locked for a few hundred milliseconds after its
+    process is stopped, so we retry a number of times. Failing that, the
+    old one is moved aside: Windows will not let a running file be
+    deleted, but it does allow it to be RENAMED.
     """
     import time
 
@@ -335,32 +335,32 @@ def _replace_exe(src: Path, target: Path) -> None:
             last = exc
             time.sleep(0.4)
 
-    old = target.with_name(target.name + ".eski")
+    old = target.with_name(target.name + ".old")
     try:
         old.unlink(missing_ok=True)
     except OSError:
-        # Oldingi o'rnatishdan qolgan va hali band bo'lishi mumkin
-        old = target.with_name(f"{target.name}.eski-{os.getpid()}")
+        # Left over from an earlier install and possibly still locked
+        old = target.with_name(f"{target.name}.old-{os.getpid()}")
     target.rename(old)
     shutil.copy2(src, target)
-    log.info("eski fayl chetga surildi: %s", old)
+    log.info("old file moved aside: %s", old)
     if last:
-        log.info("(band edi: %s)", last)
+        log.info("(it was locked: %s)", last)
 
 
 def install(quiet: bool = False) -> tuple[bool, str]:
-    """Dasturni doimiy joyga o'rnatadi. (muvaffaqiyat, xabar)"""
+    """Installs the program into its permanent place. (ok, message)"""
     exe = frozen_exe()
     if exe is None:
-        return False, ("O'rnatish faqat yig'ilgan .exe uchun ishlaydi.\n"
-                       "Manba kodidan: python -m pult")
+        return False, ("Installing only works for a built .exe.\n"
+                       "From source: python -m pult")
 
     target_dir = install_dir()
     target = target_dir / EXE_NAME
     data = target_dir / "data"
 
-    # Qayta o'rnatishda eski nusxa ishlab turgan bo'ladi - uni
-    # to'xtatmasak fayl band bo'lib qoladi
+    # On a reinstall the old copy is running - without stopping it the
+    # file stays locked
     if target.exists():
         stop_running(target_dir)
 
@@ -369,38 +369,37 @@ def install(quiet: bool = False) -> tuple[bool, str]:
         data.mkdir(exist_ok=True)
         (data / "bin").mkdir(exist_ok=True)
 
-        # O'rnatgich ichida yengil Pult.exe bo'lsa - o'shani qo'yamiz.
-        # Bo'lmasa dastur o'zini ko'chiradi.
+        # If the installer carries a slim Pult.exe inside, install that
+        # one; otherwise the program copies itself.
         _replace_exe(bundled(EXE_NAME) or exe, target)
 
-        # Yordamchi dasturlar .exe ichida bo'lsa - yoniga chiqaramiz.
-        # Ular har ishga tushganda vaqtinchalik papkaga ochilmasin:
-        # cloudflared 50 MB dan ortiq va bu sezilarli kechikish.
+        # Unpack any bundled helper programs next to the exe, so they
+        # are not extracted into a temp folder on every start:
+        # cloudflared is over 50 MB and that is a noticeable delay.
         for name in ("cloudflared-windows-amd64.exe", "ffmpeg.exe"):
             src = bundled(name)
             if src and not (data / "bin" / name).exists():
                 shutil.copy2(src, data / "bin" / name)
     except Exception as exc:
         return False, (
-            f"Fayllarni ko'chirib bo'lmadi:\n{type(exc).__name__}: {exc}\n\n"
-            f"Papka: {target_dir}\n\n"
-            "Pult ishlab tursa uni treydan chiqaring va qaytadan urinib "
-            "ko'ring."
+            f"The files could not be copied:\n{type(exc).__name__}: {exc}\n\n"
+            f"Folder: {target_dir}\n\n"
+            "If Pult is running, quit it from the tray and try again."
         )
 
-    # Sozlamalar shu yerda yaratilsin
+    # Have the settings created here
     os.environ["PULT_CONFIG_DIR"] = str(data)
     from . import config as cfgmod
 
-    # Shu kompyuterda Pult ilgari sozlangan bo'lsa - kalitini va
-    # sertifikatini olamiz, aks holda telefon uni tanimay qoladi
+    # If Pult was configured on this computer before, take its key and
+    # certificate; otherwise the phone stops recognising it
     adopted = ""
     if not (data / "config.json").is_file():
         source = existing_config()
         if source and source.resolve() != data.resolve():
             if adopt(source, data):
                 adopted = str(source)
-                log.info("eski sozlama olindi: %s", source)
+                log.info("adopted the old settings: %s", source)
 
     cfg = cfgmod.load(data / "config.json")
     p = preset()
@@ -421,72 +420,73 @@ def install(quiet: bool = False) -> tuple[bool, str]:
     ff = data / "bin" / "ffmpeg.exe"
     if ff.is_file():
         cfg.ffmpeg_path = str(ff)
-    # Yo'l aniq ko'rsatiladi: config_dir() muhit o'zgaruvchisiga
-    # tayanadi va uni shu jarayonda o'zgartirganimiz keyinroq
-    # chalkashlik tug'dirishi mumkin
+    # The path is given explicitly: config_dir() reads an environment
+    # variable, and changing that inside this process could cause
+    # confusion later
     cfgmod.save(cfg, data / "config.json")
 
-    # Oldingi almashtirishdan qolgan fayllar. Endi ular band emas,
-    # shuning uchun shu payt o'chirish mumkin.
-    for stale in target_dir.glob(EXE_NAME + ".eski*"):
-        try:
-            stale.unlink()
-        except OSError:
-            pass
+    # Files left over from an earlier replacement. They are no longer
+    # locked, so now is the time to remove them.
+    for pattern in (".old*", ".eski*"):
+        for stale in target_dir.glob(EXE_NAME + pattern):
+            try:
+                stale.unlink()
+            except OSError:
+                pass
 
     ok_task = register_task(target)
     create_shortcut(target)
 
-    lines = [f"Pult o'rnatildi: {target_dir}"]
+    lines = [f"Pult installed: {target_dir}"]
     if adopted:
-        lines.append("Avvalgi sozlama olindi - telefonni qayta ulash "
-                     "kerak emas.")
-    lines.append("Kirganda avtomatik ishga tushadi."
+        lines.append("The previous settings were adopted - there is no need "
+                     "to pair the phone again.")
+    lines.append("It starts automatically when you log in."
                  if ok_task else
-                 "Avtomatik ishga tushirishni qo'shib bo'lmadi - "
-                 "uni qo'lda sozlash kerak bo'ladi.")
+                 "Automatic startup could not be added - it will have to be "
+                 "set up by hand.")
     if cfg.telegram.enabled:
-        lines.append("Kompyuter yonganda Telegramga xabar keladi.")
+        lines.append("Telegram gets a message when the computer comes online.")
     if (cfg.update.mode or "off").lower() not in ("off", "", "none"):
-        lines.append("Yangi versiya chiqsa o'zi yangilanadi.")
+        lines.append("It updates itself when a new version comes out.")
     if cfg.remote.mode == "cloudflare":
         if (data / "bin" / "cloudflared-windows-amd64.exe").is_file():
-            lines.append("Tashqi kirish tayyor - har qanday tarmoqdan ishlaydi.")
+            lines.append("Remote access is ready - it works from any network.")
         else:
-            lines.append("Tashqi kirish yoqildi - cloudflared birinchi ishga "
-                         "tushganda yuklab olinadi.")
+            lines.append("Remote access is on - cloudflared is downloaded on "
+                         "the first start.")
     return True, "\n".join(lines)
 
 
 def uninstall() -> str:
     remove_task()
-    return ("Avtomatik ishga tushirish o'chirildi.\n\n"
-            f"Fayllar shu yerda qoldi: {install_dir()}\n"
-            "Sozlamalar ham o'sha papkada - kerak bo'lmasa qo'lda o'chiring.")
+    return ("Automatic startup has been removed.\n\n"
+            f"The files were left here: {install_dir()}\n"
+            "The settings are in that folder too - delete them by hand if "
+            "you do not need them.")
 
 
 def launch(exe: Path, pair: bool = True) -> None:
-    """O'rnatilgan nusxani ishga tushiradi va telefonni ulash sahifasini ochadi."""
+    """Starts the installed copy and opens the pairing page."""
     from .update import clean_env
 
     try:
-        # Muhit tozalanadi: PyInstaller o'zgaruvchilari meros bo'lib
-        # o'tsa yangi nusxa o'zini bola jarayon deb o'ylab, xato beradi
+        # The environment is cleaned: inheriting PyInstaller's variables
+        # makes the new copy think it is a child process and fail
         subprocess.Popen([str(exe)], cwd=str(exe.parent),
                          creationflags=NO_WINDOW, env=clean_env())
     except Exception:
-        log.exception("ishga tushirib bo'lmadi")
+        log.exception("could not start")
         return
     if pair:
         open_pairing(exe.parent / "data")
 
 
 def open_pairing(data: Path) -> None:
-    """Telefonni ulash sahifasini (QR kod) brauzerda ochadi.
+    """Opens the pairing page (the QR code) in the browser.
 
-    O'rnatishning oxirgi qadami shu bo'lishi kerak: aks holda odam
-    dastur ishga tushganini ko'radi-yu, telefonni qanday ulashni
-    bilmay qoladi.
+    This has to be the last step of the install: otherwise people see
+    that the program started but have no idea how to connect the phone.
     """
     import time
 
@@ -497,17 +497,17 @@ def open_pairing(data: Path) -> None:
         cfg = cfgmod.load(data / "config.json")
         port = cfg.port if cfg.tls == "off" else (cfg.local_port or cfg.port + 1)
         url = f"http://127.0.0.1:{port}/pair?k={cfg.token}"
-        # Server ko'tarilishini kutamiz. Sertifikat birinchi marta
-        # yasalgani uchun bu bir necha soniya olishi mumkin.
+        # Wait for the server to come up. The certificate is generated
+        # for the first time, which can take a few seconds.
         deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
             if _port_open(port):
                 window.open_url(url, size=(560, 780))
                 return
             time.sleep(0.5)
-        log.warning("server ko'tarilmadi, ulash sahifasi ochilmadi")
+        log.warning("the server did not come up, the pairing page was not opened")
     except Exception:
-        log.exception("ulash sahifasini ochib bo'lmadi")
+        log.exception("could not open the pairing page")
 
 
 def _port_open(port: int) -> bool:
@@ -519,32 +519,32 @@ def _port_open(port: int) -> bool:
 
 
 def first_run() -> bool:
-    """Birinchi ochilishda o'rnatishni taklif qiladi.
+    """Offers to install on the first run.
 
-    True qaytarsa - dastur o'rnatilgan nusxaga topshirdi va bu
-    jarayon chiqishi kerak.
+    Returning True means the program handed over to the installed copy
+    and this process should exit.
     """
     exe = frozen_exe()
     if exe is None or is_installed():
         return False
 
     if not ask(
-        "Pult shu kompyuterga o'rnatilsinmi?\n\n"
-        "• dastur doimiy papkaga ko'chiriladi\n"
-        "• kirganda o'zi ishga tushadi (terminal ochilmaydi)\n"
-        "• telefondan ulanish uchun QR kod ochiladi\n\n"
-        "Keyinroq o'chirish: Pult.exe --uninstall"
+        "Install Pult on this computer?\n\n"
+        "\u2022 the program moves into a permanent folder\n"
+        "\u2022 it starts itself at logon (no terminal window)\n"
+        "\u2022 a QR code opens so the phone can connect\n\n"
+        "To remove it later: Pult.exe --uninstall"
     ):
-        # Rad etilsa ham dastur ishlayveradi, shunchaki o'rnatilmagan
-        # holda: odam avval sinab ko'rmoqchi bo'lishi mumkin
+        # Declined, the program still runs, simply uninstalled: someone
+        # may want to try it out first
         return False
 
     ok, text = install()
     if not ok:
-        message(text, "Pult o'rnatilmadi", 0x10)
+        message(text, "Pult was not installed", 0x10)
         return False
 
     target = install_dir() / EXE_NAME
-    message(text + "\n\nEndi ishga tushiryapman.")
+    message(text + "\n\nStarting it now.")
     launch(target)
     return True

@@ -1,11 +1,11 @@
 """
-O'rnatgich uchun kirish nuqtasi.
+The entry point for the installer.
 
-Bu fayl faqat o'rnatadi va chiqadi - dasturning o'zini ishga
-tushirmaydi. Dastur ichida alohida yengil Pult.exe bo'lib, o'rnatgich
-uni joyiga qo'yadi. Shu sababli doimiy ishlaydigan dastur ichida
-ffmpeg va cloudflared bo'lmaydi va kompyuter har yonganda ular
-vaqtinchalik papkaga ochilmaydi.
+This file only installs and exits - it does not start the program
+itself. A separate, slim Pult.exe is carried inside and the installer
+puts it in place. That way the program that runs all the time does not
+contain ffmpeg and cloudflared, and they are not unpacked into a temp
+folder every time the computer starts.
 """
 import multiprocessing
 import os
@@ -19,21 +19,21 @@ from pult import setup as setupmod  # noqa: E402
 
 def main() -> int:
     if not setupmod.ask(
-        "Pult shu kompyuterga o'rnatilsinmi?\n\n"
-        "• dastur doimiy papkaga ko'chiriladi\n"
-        "• kirganda o'zi ishga tushadi (terminal ochilmaydi)\n"
-        "• telefondan ulanish uchun QR kod ochiladi\n\n"
-        "Keyinroq o'chirish: Pult.exe --uninstall",
-        "Pult o'rnatish"
+        "Install Pult on this computer?\n\n"
+        "\u2022 the program moves into a permanent folder\n"
+        "\u2022 it starts itself at logon (no terminal window)\n"
+        "\u2022 a QR code opens so the phone can connect\n\n"
+        "To remove it later: Pult.exe --uninstall",
+        "Install Pult"
     ):
         return 0
 
     ok, text = setupmod.install()
     if not ok:
-        setupmod.message(text, "Pult o'rnatilmadi", 0x10)
+        setupmod.message(text, "Pult was not installed", 0x10)
         return 1
 
-    setupmod.message(text + "\n\nEndi ishga tushiryapman.")
+    setupmod.message(text + "\n\nStarting it now.")
     setupmod.launch(setupmod.install_dir() / setupmod.EXE_NAME)
     return 0
 

@@ -6,19 +6,18 @@ import android.os.Bundle;
 import java.security.MessageDigest;
 
 /**
- * Sertifikat izini hisoblash.
+ * Computing the certificate fingerprint.
  *
- * Format agent ko'rsatadigani bilan bir xil: SHA-256 ning birinchi
- * sakkiz bayti, ikkilik sonlar ikki nuqta bilan ajratilgan. Shunda
- * foydalanuvchi telefondagi izni kompyuterdagisi bilan ko'z bilan
- * solishtira oladi.
+ * The format matches what the agent shows: the first eight bytes of the
+ * SHA-256, in hex, separated by colons. That way the user can compare
+ * the fingerprint on the phone with the one on the computer by eye.
  */
 public final class Fingerprint {
 
     private Fingerprint() {
     }
 
-    /** To'liq iz (hex, katta harflar, ajratkichsiz) - taqqoslash uchun. */
+    /** The full fingerprint (hex, upper case, no separators) for comparison. */
     public static String of(SslCertificate cert) {
         byte[] der = der(cert);
         if (der == null) return "";
@@ -32,7 +31,7 @@ public final class Fingerprint {
         }
     }
 
-    /** Ko'rsatish uchun qisqartirilgan ko'rinish: AA:BB:CC:... (8 bayt). */
+    /** The shortened form used for display: AA:BB:CC:... (8 bytes). */
     public static String shortForm(String full) {
         if (full == null || full.length() < 16) return full == null ? "" : full;
         StringBuilder sb = new StringBuilder();

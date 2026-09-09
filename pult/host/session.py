@@ -1,10 +1,10 @@
 """
-Boshqaruv sessiyasi va host konteksti.
+The control session and the host context.
 
-Bu yerda transport yo'q: kim ulangani (telefon brauzeri, hub orqali
-kelgan ulanish yoki AI agent) ahamiyatsiz. Hammasi bir xil xabarlarni
-yuboradi va bir xil javob oladi. Shuning uchun AI qo'shish alohida
-kod yozishni talab qilmaydi - u shunchaki yana bitta sessiya.
+There is no transport here: it makes no difference who connected - a
+phone browser, a connection arriving through the hub, or an AI agent.
+They all send the same messages and get the same answers, which is why
+adding an AI needs no separate code: it is simply one more session.
 """
 from __future__ import annotations
 
@@ -23,17 +23,18 @@ log = logging.getLogger("pult.session")
 
 PROTOCOL_VERSION = 1
 
-# Ikkilik kadr sarlavhasi: tur(1) + bayroqlar(1) + zaxira(2) + vaqt(4)
+# Binary frame header: kind(1) + flags(1) + reserved(2) + timestamp(4)
 _BIN_HEADER = struct.Struct("!BBHI")
 BIN_VIDEO = 1
 
-# Sekin tarmoqda navbat cheksiz o'smasligi uchun chegara. Oshib ketsa
-# navbat tozalanadi va keyingi kalit kadrgacha hech narsa yuborilmaydi -
-# rasm bir lahza qotadi, lekin kechikish to'planib ketmaydi.
+# A cap so the queue cannot grow without bound on a slow network. Once
+# it is passed the queue is cleared and nothing is sent until the next
+# key frame - the picture freezes for a moment, but latency stops piling
+# up.
 MAX_QUEUED_FRAMES = 60
 
-# Boshqa manbani ko'rayotgan boshqaruvchidan kelganda o'sha manbaga
-# o'zgartirilmasdan uzatiladigan xabarlar.
+# Messages that are forwarded to the source unchanged when they come
+# from a controller that is watching some other source.
 FORWARDED = {"mouse", "scroll", "key", "combo", "text", "release_keys", "cmd"}
 
 
@@ -42,7 +43,7 @@ def pack_video(au: bytes, key: bool, ts_ms: int) -> bytes:
 
 
 class ControllerSession:
-    """Bitta ulangan boshqaruvchi."""
+    """A single connected controller."""
 
     _counter = 0
 
@@ -59,7 +60,7 @@ class ControllerSession:
         self.send_json = send_json
         self.send_binary = send_binary
         self.peer = peer
-        self.name = "boshqaruvchi"
+        self.name = "controller"
         self.role = "controller"
         self.viewing = False
         self.connected_at = time.monotonic()
@@ -69,32 +70,32 @@ class ControllerSession:
         self._writer: asyncio.Task | None = None
         self._closed = False
 
-        # Bosib turilgan klavishlar. Alt+Tab kabi imo-ishoralarda klavish
-        # bir xabarda bosilib, boshqasida qo'yiladi. Agar orada aloqa
-        # uzilsa, klavish kompyuterda bosilgan holda qolib ketardi -
-        # Alt bosilib qolgan kompyuterni ishlatib bo'lmaydi. Shuning
-        # uchun sessiya yopilganda hammasini qo'yib yuboramiz.
+        # Keys currently held down. In a gesture like Alt+Tab the key is
+        # pressed in one message and released in another. If the
+        # connection dropped in between, the key stayed down on the
+        # computer - and a computer with Alt stuck down is unusable. So
+        # everything is released when the session closes.
         self._held_keys: set[str] = set()
 
-        # Nisbiy harakatning yaxlitlanmagan qoldig'i
+        # The un-rounded remainder of relative movement
         self._frac_x = 0.0
         self._frac_y = 0.0
 
-        # Sessiya ikki xil bo'lishi mumkin. "Boshqaruvchi" - ekranni
-        # ko'radi va buyruq yuboradi (telefon, brauzer, AI). "Manba" -
-        # o'z ekranini beradi va buyruqlarni bajaradi (telefon ilovasi).
-        # Bitta sinf ikkalasiga ham yetadi, chunki protokol bir xil.
+        # A session comes in two kinds. A "controller" watches a screen
+        # and sends commands (phone, browser, AI). A "source" hands over
+        # its own screen and carries out commands (the phone app). One
+        # class covers both, because the protocol is the same.
         self.is_source = False
-        self.source_key = ""          # manba bo'lsa - o'z raqami
+        self.source_key = ""          # for a source, its own id
         self.source_info: dict = {}
         self.source_stream: dict | None = None
         self.source_gop: list[bytes] = []
-        # Boshqaruvchi bo'lsa - hozir qaysi manbani ko'ryapti
+        # For a controller, which source it is watching right now
         self.source_id = "local"
-        # Qachon ulangani: uzilganda qancha ushlab turgani logga tushadi
+        # When it connected: on disconnect the log says how long it held
         self.started_at = time.monotonic()
 
-    # -- hayot sikli -------------------------------------------------------
+    # -- lifecycle ---------------------------------------------------------
 
     async def start(self) -> None:
         self._writer = asyncio.create_task(self._write_loop(), name=f"pult-tx-{self.id}")
@@ -110,14 +111,14 @@ class ControllerSession:
         await self.ctx.detach(self)
 
     def release_keys(self) -> None:
-        """Bu sessiya bosib qo'ygan klavishlarni qo'yib yuboradi."""
+        """Releases every key this session left pressed."""
         for name in list(self._held_keys):
             try:
                 self.ctx.input.key(name, "up")
             except Exception:
                 pass
         if self._held_keys:
-            log.info("sessiya %s: bosilgan klavishlar qo'yildi: %s",
+            log.info("session %s: released held keys: %s",
                      self.id, ", ".join(sorted(self._held_keys)))
         self._held_keys.clear()
 
@@ -129,13 +130,13 @@ class ControllerSession:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            log.info("sessiya %s uzildi: %s", self.id, exc)
+            log.info("session %s dropped: %s", self.id, exc)
             self._closed = True
 
     # -- video -------------------------------------------------------------
 
     def offer_unit(self, au: bytes, key: bool, ts_ms: int) -> None:
-        """Kadrni navbatga qo'yadi. Navbat to'lgan bo'lsa tashlab yuboradi."""
+        """Queues a frame, dropping it when the queue is full."""
         if not self.viewing or self._closed:
             return
         if self._need_key:
@@ -145,25 +146,25 @@ class ControllerSession:
         try:
             self._queue.put_nowait(pack_video(au, key, ts_ms))
         except asyncio.QueueFull:
-            # Tarmoq yetishmayapti: to'plangan kechikishni tashlaymiz
+            # The network cannot keep up: throw away the built-up delay
             while not self._queue.empty():
                 try:
                     self._queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
             self._need_key = True
-            log.debug("sessiya %s: navbat to'ldi, kalit kadr kutilmoqda", self.id)
+            log.debug("session %s: queue full, waiting for a key frame", self.id)
 
     async def on_binary(self, data: bytes) -> None:
-        """Manbadan kelgan kadr - uni ko'rayotganlarga tarqatamiz."""
+        """A frame from a source - hand it to everyone watching it."""
         if not self.is_source or len(data) < _BIN_HEADER.size:
             return
         kind, flags, _r, _ts = _BIN_HEADER.unpack_from(data, 0)
         if kind != BIN_VIDEO:
             return
         key = bool(flags & 1)
-        # Kalit kadrdan beri kelganlarni saqlaymiz: yangi tomoshabin
-        # keyingi kalit kadrni kutmasdan rasm ko'radi.
+        # Keep everything since the last key frame: a new viewer sees a
+        # picture without waiting for the next one.
         if key:
             self.source_gop = [data]
         elif len(self.source_gop) < 240:
@@ -171,7 +172,7 @@ class ControllerSession:
         await self.ctx.route_source_frame(self, data)
 
     async def send_catch_up(self) -> None:
-        """Ulangan zahoti oxirgi kalit kadrdan boshlab yuboradi."""
+        """On connect, replays from the last key frame onwards."""
         units = self.ctx.capture.catch_up()
         if not units:
             return
@@ -183,48 +184,47 @@ class ControllerSession:
             except asyncio.QueueFull:
                 break
 
-    # -- kiruvchi xabarlar -------------------------------------------------
+    # -- incoming messages -------------------------------------------------
 
     async def handle(self, msg: dict) -> None:
         kind = msg.get("t")
 
-        # Boshqaruvchi telefon ekranini ko'rayotgan bo'lsa, kiritish
-        # kompyuterga emas, o'sha telefonga ketishi kerak. Xabar
-        # shakli bir xil bo'lgani uchun uni o'zgartirmasdan uzatamiz.
+        # When the controller is watching a phone screen, input has to
+        # go to that phone rather than to the computer. The message has
+        # the same shape either way, so it is forwarded unchanged.
         if kind in FORWARDED and not self.is_source and self.source_id != "local":
             target = self.ctx.remote_sources.get(self.source_id)
             if target is None:
-                await self.send_json({"t": "error", "msg": "manba ulanmagan"})
+                await self.send_json({"t": "error", "msg": "source not connected"})
                 return
             try:
                 await target.send_json(msg)
             except Exception as exc:
-                log.info("manbaga uzatilmadi: %s", exc)
+                log.info("not forwarded to the source: %s", exc)
             return
 
         handler = getattr(self, f"_on_{kind}", None)
         if handler is None:
-            await self.send_json({"t": "error", "msg": f"noma'lum xabar: {kind}"})
+            await self.send_json({"t": "error", "msg": f"unknown message: {kind}"})
             return
         try:
             await handler(msg)
         except (ValueError, KeyError, PermissionError, TypeError) as exc:
-            # Mijozning noto'g'ri xabari - bu bizning nosozligimiz emas,
-            # shuning uchun stek izisiz, qisqa yozamiz.
-            log.warning("rad etildi (%s): %s", kind, exc)
+            # A bad message from the client is not our failure, so it is
+            # logged short and without a stack trace.
+            log.warning("rejected (%s): %s", kind, exc)
             await self.send_json({"t": "error", "msg": str(exc)})
         except Exception as exc:
-            log.exception("xabarni qayta ishlashda kutilmagan xato: %s", msg)
+            log.exception("unexpected error while handling a message: %s", msg)
             await self.send_json({"t": "error", "msg": str(exc)})
 
     async def _on_note(self, msg: dict) -> None:
-        """Mijozning o'zi haqidagi xabari - logga tushadi.
+        """A note the client makes about itself - it goes to the log.
 
-        Telefonda nima bo'layotganini bilishning oson yo'li yo'q:
-        loglarini ko'rish uchun kabel va dasturchi rejimi kerak.
-        Shuning uchun ilova muhim voqealarni (nega to'xtadi, nega
-        uzildi) shu yo'l bilan kompyuterga aytadi va ular kompyuter
-        logida ko'rinadi.
+        There is no easy way to see what is happening on the phone:
+        reading its logs needs a cable and developer mode. So the app
+        reports the events that matter (why it stopped, why it dropped)
+        this way, and they show up in the computer's log.
         """
         text = str(msg.get("msg") or "")[:300]
         log.info("[%s] %s", self.name, text)
@@ -232,7 +232,7 @@ class ControllerSession:
     async def _on_hello(self, msg: dict) -> None:
         self.name = str(msg.get("name") or self.name)[:64]
         self.role = str(msg.get("role") or "controller")[:32]
-        log.info("ulandi: %s (%s) %s", self.name, self.role, self.peer)
+        log.info("connected: %s (%s) %s", self.name, self.role, self.peer)
 
         if self.role == "source":
             self.is_source = True
@@ -245,16 +245,16 @@ class ControllerSession:
         await self.send_json({"t": "pong", "id": msg.get("id"), "ts": msg.get("ts")})
 
     async def _on_stream(self, msg: dict) -> None:
-        """Manba o'z oqimi haqida xabar berdi - uni ko'rayotganlarga uzatamiz."""
+        """A source described its stream - pass it to everyone watching."""
         if not self.is_source:
-            raise ValueError("bu xabarni faqat manba yuboradi")
+            raise ValueError("only a source sends this message")
         self.source_stream = {
             "t": "stream",
             "codec": msg.get("codec"),
             "w": msg.get("w"),
             "h": msg.get("h"),
             "fps": msg.get("fps"),
-            "encoder": msg.get("encoder", "telefon"),
+            "encoder": msg.get("encoder", "phone"),
             "source": self.source_key,
         }
         self.source_gop = []
@@ -265,27 +265,27 @@ class ControllerSession:
                 pass
 
     async def _on_view(self, msg: dict) -> None:
-        """Oqimni yoqish/o'chirish va sozlamalarini o'zgartirish."""
+        """Turns the stream on or off and changes its settings."""
         want = bool(msg.get("on", True))
 
-        # Boshqa manbaga (telefonga) o'tish
+        # Switching to another source (a phone)
         if "source" in msg:
             new_id = str(msg["source"])
             if new_id != self.source_id:
                 if new_id != "local" and new_id not in self.ctx.remote_sources:
-                    raise ValueError(f"bunday manba yo'q: {new_id}")
+                    raise ValueError(f"no such source: {new_id}")
                 self.source_id = new_id
                 self._need_key = True
 
         if self.source_id != "local":
             self.viewing = want
-            await self.ctx.sync_capture()      # kompyuter oqimi kerak emas
+            await self.ctx.sync_capture()      # the computer stream is not needed
             await self.ctx.sync_sources()
             src = self.ctx.remote_sources.get(self.source_id)
             if want and src is not None:
                 if src.source_stream:
                     await self.send_json(src.source_stream)
-                # Kalit kadrdan beri kelganlarni yuboramiz - rasm darrov chiqadi
+                # Send everything since the key frame - the picture is instant
                 for frame in list(src.source_gop):
                     try:
                         self._queue.put_nowait(frame)
@@ -318,29 +318,29 @@ class ControllerSession:
         await self.ctx.sync_capture(changed=(want and was))
         await self.ctx.sync_sources()
         if want:
-            # Kodek satri aniqlanmaguncha kutamiz: brauzer dekoderni
-            # aynan shu satr bilan sozlaydi, undan oldin yuborilgan
-            # kadrlar behuda ketadi.
+            # Wait until the codec string is known: the browser sets up
+            # its decoder from exactly that string, and frames sent
+            # before it are wasted.
             await self.ctx.capture.wait_codec()
             await self.send_json(self.ctx.stream_message())
             await self.send_catch_up()
 
-    # -- kiritish ----------------------------------------------------------
+    # -- input -------------------------------------------------------------
 
     def _to_desktop(self, x: float, y: float) -> tuple[int, int]:
-        """Normallashtirilgan (0..1) koordinatani ish stoli piksellariga."""
+        """Turns a normalised (0..1) coordinate into desktop pixels."""
         mon = self.ctx.monitor()
         px = mon["x"] + x * (mon["w"] - 1)
         py = mon["y"] + y * (mon["h"] - 1)
         return int(round(px)), int(round(py))
 
     def _accumulate(self, dx: float, dy: float) -> tuple[int, int]:
-        """Kasr qismini keyingi harakatga saqlab qoladi.
+        """Carries the fractional part over to the next movement.
 
-        Kursor faqat butun pikselga qo'yiladi. Barmoq sekin surilganda
-        har bir qadam yarim pikseldan kichik bo'lib, yaxlitlashda nolga
-        aylanib ketardi - kursor umuman qimirlamasdi. Qoldiqni to'plab
-        borganimiz uchun sekin harakat ham silliq chiqadi.
+        The cursor only lands on whole pixels. With a finger moving
+        slowly each step was under half a pixel and rounded to zero - the
+        cursor did not move at all. Accumulating the remainder keeps slow
+        movement smooth.
         """
         dx += self._frac_x
         dy += self._frac_y
@@ -351,7 +351,7 @@ class ControllerSession:
 
     def _check_input(self) -> None:
         if not self.ctx.cfg.security.allow_input:
-            raise PermissionError("kiritish sozlamalarda o'chirilgan")
+            raise PermissionError("input is disabled in the settings")
 
     async def _on_mouse(self, msg: dict) -> None:
         self._check_input()
@@ -363,16 +363,16 @@ class ControllerSession:
             ix, iy = self._accumulate(float(msg.get("dx", 0)), float(msg.get("dy", 0)))
             if ix or iy:
                 if self.ctx.cfg.stream.follow_cursor:
-                    # Kursor ekranlar orasida erkin yuradi, ko'rinish esa
-                    # unga ergashadi - shunda kursor hech qachon
-                    # ko'rinmaydigan joyga o'tib ketmaydi.
+                    # The cursor moves freely between screens and the
+                    # view follows it, so it can never wander somewhere
+                    # that is not visible.
                     wi.move_by(ix, iy)
                     await self.ctx.follow_cursor()
                 else:
-                    # Kursor boshqa ekranda qolgan bo'lsa avval shu ekranga
-                    # olib kelamiz. Shunchaki chegaraga qisib qo'yilsa,
-                    # kichkina harakatdan ham kursor uzoq chekkaga sakrab
-                    # tushardi - kutilmagan va noqulay.
+                    # If the cursor was left on another screen, bring it
+                    # here first. Simply clamping it to the edge made
+                    # even a tiny movement jump it to a far corner -
+                    # surprising and awkward.
                     self.ctx.ensure_cursor_on_monitor()
                     wi.move_by(ix, iy, bounds=self.ctx.monitor_bounds())
         elif action in ("down", "up", "click", "dblclick"):
@@ -386,7 +386,7 @@ class ControllerSession:
             else:
                 wi.button(action, button, *(pos or (None, None)))
         else:
-            raise ValueError(f"noma'lum sichqoncha amali: {action}")
+            raise ValueError(f"unknown mouse action: {action}")
 
     async def _on_scroll(self, msg: dict) -> None:
         self._check_input()
@@ -403,12 +403,12 @@ class ControllerSession:
             self._held_keys.discard(name)
 
     async def _on_swap_monitors(self, msg: dict) -> None:
-        """Ekran raqami bilan video manbasi mos kelmasa - almashtiradi."""
+        """Swaps them when the screen number and the video source disagree."""
         from .. import config as cfgmod
 
         new_map = self.ctx.rotate_monitor_map()
         cfgmod.save(self.ctx.cfg)
-        log.info("ekran xaritasi o'zgardi: %s", new_map)
+        log.info("monitor map changed: %s", new_map)
         await self.ctx.sync_capture(changed=True)
         for s in list(self.ctx.sessions):
             try:
@@ -417,14 +417,14 @@ class ControllerSession:
                 pass
 
     async def _on_release_keys(self, msg: dict) -> None:
-        """Mijoz o'zi so'rasa ham qo'yib yuboramiz (ilova fonga o'tganda)."""
+        """Release on the client's own request too (app going background)."""
         self.release_keys()
 
     async def _on_combo(self, msg: dict) -> None:
         self._check_input()
         keys = msg.get("keys") or []
         if not isinstance(keys, list) or not keys:
-            raise ValueError("combo uchun keys ro'yxati kerak")
+            raise ValueError("combo needs a keys list")
         self.ctx.input.combo([str(k) for k in keys])
 
     async def _on_text(self, msg: dict) -> None:
@@ -435,14 +435,14 @@ class ControllerSession:
 
     async def _on_cmd(self, msg: dict) -> None:
         if not self.ctx.cfg.security.allow_commands:
-            raise PermissionError("tizim buyruqlari sozlamalarda o'chirilgan")
+            raise PermissionError("system commands are disabled in the settings")
         name = str(msg.get("name", ""))
         result = self.ctx.run_command(name, msg)
         await self.send_json({"t": "cmd_ok", "name": name, "result": result})
 
 
 class HostContext:
-    """Kompyuterning umumiy holati: ekran olish, kiritish, ulanganlar."""
+    """The computer's shared state: capture, input, connected clients."""
 
     def __init__(self, cfg: Config, caps: ff.Capabilities) -> None:
         from ..platform import input_backend
@@ -452,17 +452,17 @@ class HostContext:
         self.input = input_backend()
         self.monitors = self.input.list_monitors()
         self.sessions: set[ControllerSession] = set()
-        # Ulangan telefonlar: ular ham ekran beradi, ham buyruq bajaradi
+        # Connected phones: they both give a screen and carry out commands
         self.remote_sources: dict[str, ControllerSession] = {}
         self._addr_cache: list[str] | None = None
         self._addr_at = 0.0
         self.started_at = time.time()
 
         self.capture = ScreenCapture(caps, self._on_unit, monitors=self.monitors)
-        # Kodek satri kech aniqlansa ham tomoshabin uni oladi. Ilgari
-        # faqat kutilardi: kelmasa "stream" xabari bo'sh kodek bilan
-        # ketar va boshqa hech qachon yangilanmasdi - tomoshabin
-        # "Ekran kutilmoqda" da abadiy qolib ketardi.
+        # The viewer gets the codec string even when it arrives late.
+        # Before, we only waited for it: if it never came the "stream"
+        # message went out with an empty codec and was never updated
+        # again - the viewer sat on "Waiting for the screen" forever.
         self.capture.on_codec = self._codec_ready
         self._stats_task: asyncio.Task | None = None
         self._cross_since = 0.0
@@ -473,10 +473,10 @@ class HostContext:
 
             self._system = win_system
 
-    # -- manbalar ----------------------------------------------------------
+    # -- sources -----------------------------------------------------------
 
     def sources_list(self) -> list[dict]:
-        """Ko'rish mumkin bo'lgan manbalar: kompyuterning o'zi va telefonlar."""
+        """Everything that can be watched: the computer itself and phones."""
         out = [{
             "id": "local",
             "name": self.cfg.host_name,
@@ -487,7 +487,7 @@ class HostContext:
             info = dict(sess.source_info)
             out.append({
                 "id": key,
-                "name": sess.name or info.get("name") or "telefon",
+                "name": sess.name or info.get("name") or "phone",
                 "kind": info.get("kind", "phone"),
                 "w": info.get("w"),
                 "h": info.get("h"),
@@ -497,17 +497,17 @@ class HostContext:
 
     async def add_source(self, sess: "ControllerSession") -> None:
         self.remote_sources[sess.source_key] = sess
-        log.info("manba qo'shildi: %s (%s)", sess.name, sess.source_key)
+        log.info("source added: %s (%s)", sess.name, sess.source_key)
         await self.broadcast_sources()
 
     async def remove_source(self, sess: "ControllerSession") -> None:
         if self.remote_sources.pop(sess.source_key, None) is None:
             return
-        # Qancha ushlab turgani ham yoziladi: telefon tez-tez uzilib
-        # tursa, sababini izlashda birinchi ko'radigan raqam shu.
+        # How long it held is logged too: when a phone keeps dropping,
+        # that is the first number to look at.
         alive = time.monotonic() - sess.started_at if sess.started_at else 0.0
-        log.info("manba uzildi: %s (%.0f soniya ushlab turdi)", sess.name, alive)
-        # Uni ko'rayotganlarni kompyuter ekraniga qaytaramiz
+        log.info("source dropped: %s (held for %.0f seconds)", sess.name, alive)
+        # Send anyone watching it back to the computer screen
         for s in list(self.sessions):
             if s.source_id == sess.source_key:
                 s.source_id = "local"
@@ -533,12 +533,12 @@ class HostContext:
                 if s.viewing and not s.is_source and s.source_id == source_id]
 
     async def route_source_frame(self, sess: "ControllerSession", data: bytes) -> None:
-        """Telefondan kelgan kadrni uni ko'rayotganlarga uzatadi."""
+        """Routes a frame from a phone to everyone watching that phone."""
         for s in self.viewers_of(sess.source_key):
             try:
                 s._queue.put_nowait(data)
             except asyncio.QueueFull:
-                # Sekin tomoshabin butun oqimni sekinlashtirmasin
+                # One slow viewer must not slow the whole stream down
                 while not s._queue.empty():
                     try:
                         s._queue.get_nowait()
@@ -546,10 +546,10 @@ class HostContext:
                         break
 
     async def sync_sources(self) -> None:
-        """Har bir telefonga: seni kimdir ko'ryaptimi yo'qmi.
+        """Tells each phone whether anyone is watching it.
 
-        Hech kim ko'rmayotganda telefon ekranini olmaydi - batareya va
-        trafik bekorga sarflanmasin.
+        With nobody watching, the phone does not capture its screen -
+        no battery and no traffic spent for nothing.
         """
         for key, sess in list(self.remote_sources.items()):
             want = bool(self.viewers_of(key))
@@ -565,7 +565,7 @@ class HostContext:
             except Exception:
                 pass
 
-    # -- ma'lumot ----------------------------------------------------------
+    # -- information -------------------------------------------------------
 
     def monitor(self) -> dict:
         idx = self.cfg.stream.monitor
@@ -581,11 +581,11 @@ class HostContext:
         return None
 
     async def follow_cursor(self) -> None:
-        """Kursor boshqa ekranga o'tsa ko'rinishni ham o'sha yerga ko'chiradi.
+        """Moves the view along when the cursor crosses to another screen.
 
-        Kechikish bilan: chegara ustida u yoq-bu yoqqa yurilganda oqim
-        qayta-qayta ishga tushib ketmasligi kerak - har qayta ishga
-        tushish yarim soniyalik to'xtalish demak.
+        With a delay: wandering back and forth over the boundary must not
+        restart the stream over and over - every restart costs about half
+        a second of black.
         """
         x, y = self.input.cursor_pos()
         idx = self.monitor_at(x, y)
@@ -600,7 +600,7 @@ class HostContext:
             return
         self._cross_since = 0.0
         self.cfg.stream.monitor = idx
-        log.info("kursor %d-ekranga o'tdi, ko'rinish ko'chirildi", idx + 1)
+        log.info("cursor moved to screen %d, the view followed", idx + 1)
         await self.sync_capture(changed=True)
 
     def monitor_bounds(self) -> tuple[int, int, int, int]:
@@ -608,12 +608,12 @@ class HostContext:
         return m["x"], m["y"], m["w"], m["h"]
 
     def ensure_cursor_on_monitor(self) -> None:
-        """Kursorni ko'rinib turgan ekranga olib keladi.
+        """Brings the cursor onto the screen that is being watched.
 
-        Ekran almashtirilganda kursor eskisida qolib ketardi va trackpad
-        bilan bosilgan joy foydalanuvchi ko'rmayotgan ekranga tushardi.
-        Kursor allaqachon kerakli ekranda bo'lsa tegilmaydi - bekordan
-        bekorga sakratib yubormaymiz.
+        After switching screens the cursor stayed on the old one, and a
+        tap on the trackpad landed on a screen the user could not see.
+        A cursor already on the right screen is left alone - no need to
+        make it jump for nothing.
         """
         if not self.cfg.security.allow_input:
             return
@@ -625,19 +625,19 @@ class HostContext:
         self.input.move_to(bx + bw // 2, by + bh // 2)
 
     def addresses(self) -> list[str]:
-        """Shu agentga yetib boradigan manzillar, tez-sekin tartibida.
+        """Addresses that reach this agent, fastest first.
 
-        Mahalliy manzillar oldinda: bitta tarmoqda bo'lganda ular
-        tunneldan bir necha barobar tez va kechikishi kam. Tunnel
-        oxirida - u har joydan ishlaydi, lekin trafik Cloudflare
-        orqali aylanib o'tadi.
+        Local addresses come first: on the same network they are several
+        times faster than the tunnel and have less latency. The tunnel
+        goes last - it works from anywhere, but the traffic detours
+        through Cloudflare.
         """
         from ..config import local_addresses
 
-        # Mahalliy manzillarni aniqlash tarmoq so'rovi talab qiladi va
-        # bu har ulanishda takrorlanardi. IP manzillar esa kamdan-kam
-        # o'zgaradi, shuning uchun qisqa muddatga saqlab turamiz.
-        # Tunnel manzili keshdan tashqarida - u tez-tez yangilanadi.
+        # Finding the local addresses takes a network query, and that
+        # was repeated on every connection. IP addresses rarely change,
+        # so they are cached for a short while. The tunnel address stays
+        # outside the cache - it is updated often.
         now = time.monotonic()
         if self._addr_cache is None or now - self._addr_at > 30:
             scheme = "http" if self.cfg.tls == "off" else "https"
@@ -661,12 +661,12 @@ class HostContext:
                 "encoders": sorted(e for e in self.caps.encoders if "264" in e),
                 "commands": sorted(self._system.COMMANDS) if self._system else [],
                 "uptime": int(time.time() - self.started_at),
-                # Shu kompyuterga yetib boradigan barcha manzillar.
-                # Telefon shundan eng tezini o'zi tanlaydi: bitta
-                # tarmoqda bo'lsa mahalliy manzil tunneldan ancha
-                # tez, boshqa tarmoqda esa faqat tunnel ishlaydi.
-                # Tunnel manzili har ishga tushganda yangi bo'lgani
-                # uchun uni har ulanishda qaytadan aytish shart.
+                # Every address that reaches this computer. The phone
+                # picks the fastest itself: on the same network a local
+                # address beats the tunnel by a wide margin, and from
+                # another network only the tunnel works. The tunnel
+                # address is new on every start, so it has to be
+                # restated on every connection.
                 "addresses": self.addresses(),
             },
             "sources": self.sources_list(),
@@ -693,23 +693,22 @@ class HostContext:
         }
 
     def source_for(self, monitor: int) -> int:
-        """Ekran raqamiga mos ekran olish manbasi."""
+        """The capture source that matches a screen number."""
         m = self.cfg.stream.monitor_map
         if m and 0 <= monitor < len(m):
             return m[monitor]
         return monitor
 
     def rotate_monitor_map(self) -> list[int]:
-        """Ekran-manba bog'lanishini bir qadam suradi.
+        """Rotates the screen-to-source mapping by one step.
 
-        Ikki ekranli kompyuterda bu ularni almashtiradi. Videokarta
-        chiqishlarining tartibini ishonchli aniqlashning yo'li yo'q,
-        shuning uchun taxmin noto'g'ri chiqsa foydalanuvchi bir bosishda
-        tuzata oladi.
+        On a two-screen computer this swaps them. There is no reliable
+        way to work out the order of the graphics card's outputs, so when
+        the guess comes out wrong the user can fix it with one press.
         """
         n = len(self.monitors)
         if n < 2:
-            raise ValueError("almashtirish uchun kamida ikkita ekran kerak")
+            raise ValueError("swapping needs at least two screens")
         cur = list(self.cfg.stream.monitor_map) or list(range(n))
         if len(cur) != n:
             cur = list(range(n))
@@ -729,7 +728,7 @@ class HostContext:
             encoder=s.encoder,
         )
 
-    # -- ulanishlar --------------------------------------------------------
+    # -- connections -------------------------------------------------------
 
     async def attach(self, session: ControllerSession) -> None:
         self.sessions.add(session)
@@ -747,25 +746,25 @@ class HostContext:
             self._stats_task = None
 
     async def sync_capture(self, changed: bool = False) -> None:
-        """Tomoshabin bor-yo'qligiga qarab ekran olishni yoqadi yoki o'chiradi.
+        """Starts or stops capture depending on whether anyone is watching.
 
-        Hech kim qaramayotganda ffmpeg umuman ishlamaydi - kompyuter bo'sh
-        turganda dastur resurs yemasligi shundan.
+        With nobody looking, ffmpeg does not run at all - that is why the
+        program costs nothing while the computer sits idle.
         """
         want = bool(self.viewers_of("local"))
         if want and not self.capture.running:
             await self.capture.start(self._capture_config())
         elif want and changed:
             await self.capture.apply(self._capture_config())
-            # Sozlama o'zgarsa oqim qayta boshlanadi va kodek satri ham
-            # o'zgarishi mumkin. Buni o'zgartirishni so'ramagan boshqa
-            # tomoshabinlar ham bilishi kerak.
+            # Changing a setting restarts the stream and can change the
+            # codec string. The other viewers, who did not ask for the
+            # change, need to hear about it too.
             asyncio.create_task(self._announce_stream(), name="pult-announce")
         elif not want and self.capture.running:
             await self.capture.stop()
 
     def _codec_ready(self) -> None:
-        """Kodek aniqlandi - ko'rayotganlarga darhol aytamiz."""
+        """The codec is known - tell the watchers at once."""
         asyncio.create_task(self._send_stream(), name="pult-codec")
 
     async def _send_stream(self) -> None:
@@ -818,22 +817,22 @@ class HostContext:
         except asyncio.CancelledError:
             raise
 
-    # -- buyruqlar ---------------------------------------------------------
+    # -- commands ----------------------------------------------------------
 
     def run_command(self, name: str, msg: dict) -> str:
         if self._system is None:
-            raise RuntimeError("bu tizimda buyruqlar qo'llab-quvvatlanmaydi")
+            raise RuntimeError("commands are not supported on this system")
         if name == "run":
             command = str(msg.get("command", "")).strip()
             if not command:
-                raise ValueError("command bo'sh")
+                raise ValueError("command is empty")
             self._system.run_program(command)
-            return f"ishga tushirildi: {command}"
+            return f"started: {command}"
         fn = self._system.COMMANDS.get(name)
         if fn is None:
-            raise ValueError(f"noma'lum buyruq: {name}")
+            raise ValueError(f"unknown command: {name}")
         fn()
-        return "bajarildi"
+        return "done"
 
     async def shutdown(self) -> None:
         if self._stats_task:

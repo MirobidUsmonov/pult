@@ -1,19 +1,19 @@
 """
-Bitta nusxa qulfi.
+Single-instance lock.
 
-Bir vaqtda ikkita agent ishlasa hammasi buziladi: ular port uchun
-kurashadi, ekranni ikkalasi oladi va o'z-o'zini yangilashda bir-birining
-faylini almashtirib yuboradi. Amalda shu ko'rilgan - qayta ishga
-tushirishlardan keyin to'rtta nusxa yig'ilib qolgan, eskisi portni
-ushlab turgan, fayli esa allaqachon boshqasiga almashtirilgani uchun
-u modullarini o'qiy olmay 500 xato bergan.
+Two agents running at once breaks everything: they fight over the port,
+both grab the screen, and during a self-update they swap each other's
+executable. This is not hypothetical — after a few restarts four copies
+had piled up, the oldest still holding the port while its own file had
+already been replaced, so it could no longer read its own modules and
+answered every request with a 500.
 
-Windows'da nomlangan muteks ishlatiladi: jarayon tugashi bilan tizim
-uni o'zi bo'shatadi, ya'ni dastur qulab tushsa ham qulf osilib
-qolmaydi. Fayl qulfida bunday kafolat yo'q.
+Windows named mutexes are used because the system releases them when the
+process ends, so a crash cannot leave the lock stuck. A lock file gives
+no such guarantee.
 
-Kutish vaqti bor, chunki yangilanishdan keyin eski nusxa chiqib
-ulgurmagan bo'lishi mumkin: yangisi uni bir oz kutib turadi.
+There is a wait, because right after an update the old copy may not have
+exited yet: the new one gives it a moment.
 """
 from __future__ import annotations
 
@@ -23,20 +23,21 @@ import time
 
 log = logging.getLogger("pult.single")
 
-NAME = "Local\\PultAgentYagona"
+NAME = "Local\\PultAgentSingle"
 
 _handle = None
 
 
 def acquire(timeout: float = 0.0) -> bool:
-    """Qulfni oladi. Boshqa nusxa ushlab tursa - False.
+    """Takes the lock. Returns False if another copy holds it.
 
-    Qulf jarayon tugaguncha saqlanadi; ataylab bo'shatish kerak emas.
+    The lock lives until the process ends; releasing it explicitly is
+    not necessary.
     """
     global _handle
     if sys.platform != "win32":
-        # Boshqa tizimlarda portning o'zi qulf vazifasini bajaradi:
-        # ikkinchi nusxa baribir ko'tarila olmaydi
+        # Elsewhere the port itself acts as the lock: a second copy
+        # cannot bind it anyway
         return True
 
     import ctypes
@@ -57,6 +58,6 @@ def acquire(timeout: float = 0.0) -> bool:
             kernel32.CloseHandle(handle)
         if time.monotonic() >= end:
             return False
-        # Eski nusxa chiqishini kutamiz - yangilanishdan keyin u bir
-        # necha soniya jonli qolishi mumkin
+        # Wait for the old copy to exit - after an update it can stay
+        # alive for a few more seconds
         time.sleep(0.5)

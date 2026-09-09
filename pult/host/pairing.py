@@ -1,13 +1,12 @@
 """
-Telefonni ulash sahifasi.
+The pairing page.
 
-Kompyuterning o'z brauzerida ochiladi va QR kod ko'rsatadi. Shu tariqa
-uzun kalitni qo'lda ko'chirish kerak bo'lmaydi - telefon kamerasi bilan
-skanerlash yetarli.
+It opens in the computer's own browser and shows a QR code, so the long
+key never has to be copied by hand - scanning it with the phone's camera
+is enough.
 
-QR kod segno bilan yasaladi: u sof Python, tashqi ikkilik fayllarga
-bog'liq emas, shuning uchun dasturni bitta .exe qilib yig'ishga xalaqit
-bermaydi.
+The QR code is made with segno: pure Python, no external binaries, so it
+does not get in the way of building the program into a single .exe.
 """
 from __future__ import annotations
 
@@ -18,29 +17,27 @@ from urllib.parse import quote
 
 from ..config import Config
 
-# Ataylab yuqorida, funksiya ichida emas. Bitta faylga yig'ilgan dastur
-# modullarni o'z .exe faylidan o'qiydi; o'z-o'zini yangilash o'sha
-# faylni almashtiradi. Shundan keyin kech import qilingan modul
-# o'qilmay qoladi ("incorrect header check"). Ishga tushishda import
-# qilinsa, bunday xavf yo'q.
+# Deliberately at the top rather than inside the function. A one-file
+# build reads its modules out of its own .exe, and a self-update
+# replaces that file. After that a lazily imported module can no longer
+# be read ("incorrect header check"). Importing at startup avoids it.
 try:
     import segno
-except ImportError:  # pragma: no cover - QR ixtiyoriy qulaylik
+except ImportError:  # pragma: no cover - the QR code is optional
     segno = None
 
 
 def responsive(svg: str) -> str:
-    """SVG'ga viewBox qo'shib, qat'iy o'lchamini olib tashlaydi.
+    """Adds a viewBox to the SVG and drops its fixed size.
 
-    segno SVG'ni qat'iy piksel o'lchami bilan yozadi va viewBox
-    qo'shmaydi. Bunday SVG'ga CSS orqali kichikroq o'lcham berilsa u
-    KICHRAYMAYDI - kesiladi. QR kodning o'ng va past qismi yo'qoladi,
-    ya'ni kod umuman o'qilmaydi.
+    segno writes the SVG with a fixed pixel size and no viewBox. Give
+    such an SVG a smaller size through CSS and it does not SCALE - it is
+    CROPPED. The right and bottom of the QR code disappear, and the code
+    stops being readable at all.
 
-    Buni ko'z bilan sezish qiyin: kesilgan QR ham QR kodga o'xshab
-    turadi, faqat skanerlanmaydi. Havola uzaygani sayin (masalan
-    tunnel manzili qo'shilganda) kod kattaroq bo'ladi va ko'proq
-    qirqiladi.
+    This is hard to catch by eye: a cropped QR still looks like a QR, it
+    simply does not scan. The longer the link (a tunnel address, for
+    instance) the bigger the code and the more of it is cut off.
     """
     m = re.search(r'<svg[^>]*?width="([0-9.]+)"[^>]*?height="([0-9.]+)"', svg)
     if not m:
@@ -55,9 +52,9 @@ def responsive(svg: str) -> str:
 
 def qr_svg(data: str, scale: int = 8) -> str:
     if segno is None:
-        return '<p class="warn">QR kod uchun "segno" kutubxonasi kerak: pip install segno</p>'
+        return '<p class="warn">The QR code needs "segno": pip install segno</p>'
 
-    # segno SVG'ni bayt oqimiga yozadi, shuning uchun BytesIO
+    # segno writes the SVG to a byte stream, hence BytesIO
     buf = io.BytesIO()
     segno.make(data, error="m").save(
         buf, kind="svg", scale=scale, border=2,
@@ -67,11 +64,11 @@ def qr_svg(data: str, scale: int = 8) -> str:
 
 
 def app_link(target: str) -> str:
-    """Pult ilovasi uchun havola.
+    """A link that opens the Pult app.
 
-    Oddiy https havolasini kamera skanerlasa brauzer ochiladi. Ilova esa
-    o'z sxemasi bilan ochiladi, shuning uchun ikkita QR kerak - qaysi biri
-    kerakligini foydalanuvchi tanlaydi.
+    Scanning a plain https link with the camera opens the browser; the
+    app opens through its own scheme. Hence two QR codes, with the user
+    picking the one they need.
     """
     return "pult://add?u=" + quote(target, safe="")
 
@@ -81,16 +78,16 @@ def render_pair_page(target: str, urls: list[str], cfg: Config, fingerprint: str
         f'<li><code>{html.escape(u)}/#k={html.escape(cfg.token)}</code></li>'
         for u in urls[1:]
     )
-    alt_block = f"<details><summary>Boshqa manzillar</summary><ul>{alt}</ul></details>" if alt else ""
-    # Telegram sozlangan bo'lsagina tugma ko'rsatiladi: ishlamaydigan
-    # tugma foydalanuvchini adashtiradi
+    alt_block = f"<details><summary>Other addresses</summary><ul>{alt}</ul></details>" if alt else ""
+    # The button only appears when Telegram is set up: a button that
+    # does nothing is worse than no button
     telegram = bool(cfg.telegram.bot_token and cfg.telegram.chat_id)
 
     return f"""<!doctype html>
-<html lang="uz"><head>
+<html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pult - telefonni ulash</title>
+<title>Pult - connect your phone</title>
 <style>
   :root {{ color-scheme: dark; }}
   body {{
@@ -106,8 +103,8 @@ def render_pair_page(target: str, urls: list[str], cfg: Config, fingerprint: str
   h1 {{ margin: 0 0 4px; font-size: 20px; }}
   .host {{ color: #4da3ff; font-weight: 600; }}
   .qr {{ background: #fff; padding: 14px; border-radius: 14px; display: inline-block; margin: 18px 0 10px; }}
-  /* Balandlik berilmaydi: viewBox bor, shuning uchun SVG kengligiga
-     qarab o'zi mutanosib kichrayadi. */
+  /* No height is set: the viewBox is there, so the SVG scales
+     proportionally with its width. */
   .qr svg {{ display: block; width: min(300px, 60vw); height: auto; }}
   code {{
     background: #1c222a; padding: 3px 7px; border-radius: 6px;
@@ -141,12 +138,12 @@ def render_pair_page(target: str, urls: list[str], cfg: Config, fingerprint: str
 </style>
 </head><body>
 <div class="card">
-  <h1>Telefonni ulash</h1>
+  <h1>Connect your phone</h1>
   <div class="host">{html.escape(cfg.host_name)}</div>
 
   <div class="tabs">
-    <button class="tab on" data-for="qr-app">Pult ilovasi</button>
-    <button class="tab" data-for="qr-web">Brauzer</button>
+    <button class="tab on" data-for="qr-app">Pult app</button>
+    <button class="tab" data-for="qr-web">Browser</button>
   </div>
 
   <div class="qr" id="qr-app">{qr_svg(app_link(target))}</div>
@@ -155,43 +152,43 @@ def render_pair_page(target: str, urls: list[str], cfg: Config, fingerprint: str
   <div><code id="link">{html.escape(target)}</code></div>
 
   <div class="acts">
-    <button class="act" id="copy">Havolani nusxalash</button>
-    <button class="act" id="send" {"" if telegram else "hidden"}>Telegramga yuborish</button>
+    <button class="act" id="copy">Copy link</button>
+    <button class="act" id="send" {"" if telegram else "hidden"}>Send to Telegram</button>
   </div>
   <div class="said" id="said"></div>
 
   <ol id="steps-app">
-    <li>Telefonda Pult ilovasi bo&lsquo;lsin.</li>
-    <li>Kamera bilan QR kodni skanerlang &mdash; ilova o&lsquo;zi ochiladi.</li>
-    <li>Sertifikat izi so&lsquo;ralsa <b>&laquo;Ishonaman&raquo;</b> ni bosing.
-        Bir marta so&lsquo;raladi.</li>
+    <li>Make sure the Pult app is installed on the phone.</li>
+    <li>Scan the QR code with the camera &mdash; the app opens itself.</li>
+    <li>If you are asked about the certificate fingerprint, tap
+        <b>Trust</b>. You are only asked once.</li>
   </ol>
 
   <ol id="steps-web" hidden>
-    <li>Telefon kamerasi bilan QR kodni skanerlang.</li>
-    <li>Brauzer sertifikat haqida ogohlantirsa: <b>Qo&lsquo;shimcha &rarr;
-        Baribir davom etish</b>.</li>
-    <li>Menyudan <b>&laquo;Bosh ekranga qo&lsquo;shish&raquo;</b> ni tanlang.</li>
+    <li>Scan the QR code with the phone's camera.</li>
+    <li>If the browser warns about the certificate: <b>Advanced &rarr;
+        Proceed anyway</b>.</li>
+    <li>From the menu choose <b>Add to Home screen</b>.</li>
   </ol>
 
   <details>
-    <summary>Kamera ishlamasa</summary>
-    <p><b>Telegramga yuborish</b> ni bosing. Telefonda kelgan havolani
-    bosib turing &rarr; <b>Ulashish</b> &rarr; <b>Pult</b>. Kompyuter
-    ro&lsquo;yxatga o&lsquo;zi qo&lsquo;shiladi.</p>
-    <p>Yoki havolani nusxalab, ilovadagi <b>&laquo;+ Kompyuter
-    qo&lsquo;shish&raquo;</b> ga qo&lsquo;ying.</p>
+    <summary>If the camera will not do it</summary>
+    <p>Press <b>Send to Telegram</b>. On the phone, long-press the link
+    that arrives &rarr; <b>Share</b> &rarr; <b>Pult</b>. The computer
+    adds itself to the list.</p>
+    <p>Or copy the link and paste it into <b>+ Add computer</b> in the
+    app.</p>
   </details>
 
   <div class="warn">
-    Bu havolada kompyuterni to&lsquo;liq boshqarish kaliti bor.
-    Uni birovga yubormang. Kalit chiqib ketgan bo&lsquo;lsa, sozlamalar
-    faylidagi <code>token</code> ni o&lsquo;chirib, dasturni qayta ishga
-    tushiring &mdash; yangi kalit yasaladi.
+    This link carries the key to full control of the computer. Do not
+    forward it to anyone. If the key gets out, delete <code>token</code>
+    from the settings file and restart the program &mdash; a new key is
+    generated.
   </div>
 
   {alt_block}
-  {f'<div class="fp">Sertifikat izi: {html.escape(fingerprint)}</div>' if fingerprint else ''}
+  {f'<div class="fp">Certificate fingerprint: {html.escape(fingerprint)}</div>' if fingerprint else ''}
 </div>
 <script>
   document.querySelectorAll(".tab").forEach(function (t) {{
@@ -215,21 +212,21 @@ def render_pair_page(target: str, urls: list[str], cfg: Config, fingerprint: str
   document.getElementById("copy").onclick = function () {{
     var link = document.getElementById("link").textContent;
     navigator.clipboard.writeText(link).then(
-      function () {{ say("Nusxalandi"); }},
-      function () {{ say("Nusxalab bo‘lmadi", true); }}
+      function () {{ say("Copied"); }},
+      function () {{ say("Could not copy", true); }}
     );
   }};
 
   var send = document.getElementById("send");
   if (send) send.onclick = function () {{
     send.disabled = true;
-    say("Yuborilmoqda…");
+    say("Sending…");
     fetch("/api/pair/send" + location.search, {{ method: "POST" }})
       .then(function (r) {{ return r.json(); }})
       .then(function (d) {{
-        say(d.ok ? "Telegramga yuborildi" : (d.msg || "Yuborilmadi"), !d.ok);
+        say(d.ok ? "Sent to Telegram" : (d.msg || "Not sent"), !d.ok);
       }})
-      .catch(function () {{ say("Yuborilmadi", true); }})
+      .catch(function () {{ say("Not sent", true); }})
       .then(function () {{ send.disabled = false; }});
   }};
 </script>

@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">Pult</string>
 
-    <!-- Android resurslarida apostrof qochirilishi shart, aks holda
-         fayl umuman kompilyatsiya qilinmaydi. -->
-    <string name="accessibility_description">Kompyuterdan kelgan bosish va surishlarni telefonda bajaradi. Bu xizmatsiz kompyuter telefonni boshqara olmaydi — Android boshqa yo\'l bermaydi.</string>
+    <!-- Apostrophes have to be escaped in Android resources, or the
+         file will not compile at all. -->
+    <string name="accessibility_description">Carries out taps and swipes sent from the computer. Without this service the computer cannot control the phone — Android allows no other way.</string>
 </resources>

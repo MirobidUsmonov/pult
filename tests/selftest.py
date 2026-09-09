@@ -1,17 +1,16 @@
 """
-Pult o'z-o'zini tekshiruvi.
+Pult's self-test.
 
-Ishlatish:
+Usage:
     python tests/selftest.py
 
-Nima qiladi: ffmpeg va kodlagichlarni topadi, ekranlarni sanaydi,
-sichqoncha aniqligini o'lchaydi, video zanjirini haqiqiy ishga
-tushirib oqim to'g'riligini ffprobe bilan tekshiradi, so'ng vaqtinchalik
-server ko'tarib butun protokolni uchidan uchiga sinaydi.
+What it does: finds ffmpeg and the encoders, counts the screens,
+measures pointer accuracy, actually runs the video pipeline and checks
+the stream with ffprobe, then brings up a temporary server and exercises
+the whole protocol end to end.
 
-Testlar sizning haqiqiy sozlamalaringizga tegmaydi: vaqtinchalik papka
-ishlatiladi. Sichqoncha qisqa vaqt harakatlanadi va oxirida joyiga
-qaytariladi.
+The tests leave your real settings alone: a temporary folder is used.
+The mouse moves briefly and is put back where it was.
 """
 from __future__ import annotations
 
@@ -30,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-# Haqiqiy sozlamalarga tegmaslik uchun - import'dan OLDIN
+# So the real settings are left alone - BEFORE the import
 _TMP = Path(tempfile.mkdtemp(prefix="pult-selftest-"))
 os.environ["PULT_CONFIG_DIR"] = str(_TMP)
 
@@ -43,7 +42,7 @@ from pult.platform import ffmpeg as ff  # noqa: E402
 
 HDR = struct.Struct("!BBHI")
 
-PASS, FAIL, SKIP = "OK  ", "XATO", "----"
+PASS, FAIL, SKIP = "OK  ", "FAIL", "----"
 results: list[tuple[str, str, str]] = []
 
 
@@ -60,7 +59,7 @@ def section(title: str) -> None:
 
 
 def cursor_still(wi, ms: int = 80) -> bool:
-    """Kursor tinch turibdimi."""
+    """Whether the cursor is sitting still."""
     a = wi.cursor_pos()
     time.sleep(ms / 1000)
     return a == wi.cursor_pos()
@@ -75,15 +74,15 @@ def wait_still(wi, timeout: float = 3.0) -> bool:
 
 
 def measure_pointer(wi, targets, send, tries: int = 3) -> tuple[int, bool]:
-    """Kursorni belgilangan nuqtalarga yuborib, aniqlikni o'lchaydi.
+    """Sends the cursor to given points and measures the accuracy.
 
-    Qaytaradi: (eng katta xato, xalaqit bo'ldimi).
+    Returns: (the worst error, whether there was interference).
 
-    Foydalanuvchi shu payt sichqonchani ishlatayotgan bo'lsa, uning
-    harakati bizning buyrug'imizni bosib ketadi va o'lchov ma'nosiz
-    bo'ladi. Buni xato deb hisoblash noto'g'ri bo'lardi - shuning uchun
-    kursor tinchligini kutamiz, bir necha marta urinamiz va baribir
-    chiqmasa "o'lchab bo'lmadi" deb belgilaymiz.
+    If the user happens to be moving the mouse right then, their
+    movement overrides our command and the measurement is meaningless.
+    Counting that as a failure would be wrong - so we wait for the
+    cursor to settle, retry a few times, and if it still will not
+    settle, mark it "could not measure".
     """
     worst = 0
     interference = False
@@ -120,47 +119,47 @@ def free_port() -> int:
     return port
 
 
-# ---------------------------------------------------------------- 1. muhit
+# ---------------------------------------------------------- 1. environment
 
 
 def test_environment() -> ff.Capabilities | None:
-    section("1. Muhit")
+    section("1. Environment")
     path = ff.find_ffmpeg()
-    if not check("ffmpeg topildi", bool(path), path or "PATH da yo'q"):
+    if not check("ffmpeg found", bool(path), path or "not on PATH"):
         return None
     caps = ff.probe(path)
-    check("versiya o'qildi", bool(caps.version), caps.version)
+    check("version read", bool(caps.version), caps.version)
 
     h264 = sorted(e for e in caps.encoders if "264" in e)
-    check("H.264 kodlagich bor", bool(h264), ", ".join(h264))
+    check("an H.264 encoder exists", bool(h264), ", ".join(h264))
 
     enc = ff.pick_encoder(caps)
-    check("kodlagich tanlandi", True, f"{enc['label']} ({enc['name']})")
+    check("encoder chosen", True, f"{enc['label']} ({enc['name']})")
     if enc["name"] == "libx264":
-        check("apparat kodlash", None, "yo'q - protsessor ishlatiladi, yuk yuqoriroq")
+        check("hardware encoding", None, "none - the CPU is used, which costs more")
 
     grabber = "ddagrab" if "ddagrab" in caps.filters else ("gdigrab" if "gdigrab" in caps.devices else "")
-    check("ekran olish usuli", bool(grabber), grabber or "topilmadi")
-    check("AUD bitstream filtri", caps.has_aud_bsf,
-          "h264_metadata" if caps.has_aud_bsf else "yo'q - kadrlarga ajratish ishlamaydi")
+    check("capture method", bool(grabber), grabber or "not found")
+    check("AUD bitstream filter", caps.has_aud_bsf,
+          "h264_metadata" if caps.has_aud_bsf else "missing - frame splitting will not work")
     return caps
 
 
-# ------------------------------------------------------- 2. ekran, kiritish
+# ------------------------------------------------------ 2. screens, input
 
 
 def test_input() -> list[dict]:
-    section("2. Ekranlar va kiritish")
+    section("2. Screens and input")
     try:
         from pult.platform import input_backend
 
         wi = input_backend()
     except Exception as exc:
-        check("kiritish moduli", False, str(exc))
+        check("input module", False, str(exc))
         return []
 
     mons = wi.list_monitors()
-    check("ekranlar topildi", bool(mons),
+    check("screens found", bool(mons),
           ", ".join(f"{m['w']}x{m['h']}" for m in mons))
     if not mons:
         return []
@@ -173,9 +172,9 @@ def test_input() -> list[dict]:
     ]
     worst, noisy = measure_pointer(wi, targets, wi.move_to)
     if worst > 2 and noisy:
-        check("kursor aniqligi", None, "o'lchab bo'lmadi - sichqoncha ishlatilmoqda")
+        check("pointer accuracy", None, "could not measure - the mouse is in use")
     else:
-        check("kursor aniqligi", worst <= 2, f"eng katta xato {worst} px")
+        check("pointer accuracy", worst <= 2, f"worst error {worst} px")
 
     wi.move_to(mons[0]["x"] + 400, mons[0]["y"] + 400)
     time.sleep(0.05)
@@ -183,13 +182,13 @@ def test_input() -> list[dict]:
     wi.move_by(50, -30)
     time.sleep(0.05)
     ax, ay = wi.cursor_pos()
-    check("nisbiy harakat", abs((ax - bx) - 50) <= 2 and abs((ay - by) + 30) <= 2,
-          f"so'ralgan (+50,-30), bo'ldi ({ax - bx:+d},{ay - by:+d})")
+    check("relative movement", abs((ax - bx) - 50) <= 2 and abs((ay - by) + 30) <= 2,
+          f"asked for (+50,-30), got ({ax - bx:+d},{ay - by:+d})")
 
     bad = [k for k in ("ctrl", "shift", "Escape", "F5", "ArrowUp", "a", "7",
                        "AudioVolumeUp", "NumpadEnter")
            if not _key_ok(wi, k)]
-    check("klavish xaritasi", not bad, "hammasi yechildi" if not bad else f"yechilmadi: {bad}")
+    check("key map", not bad, "all resolved" if not bad else f"not resolved: {bad}")
 
     wi.move_to(*saved)
     return mons
@@ -207,7 +206,7 @@ def _key_ok(wi, name: str) -> bool:
 
 
 async def test_capture(caps: ff.Capabilities, mons: list[dict]) -> None:
-    section("3. Video zanjiri")
+    section("3. The video pipeline")
     out = _TMP / "probe.h264"
     units: list[tuple[int, bool]] = []
     fh = out.open("wb")
@@ -224,15 +223,15 @@ async def test_capture(caps: ff.Capabilities, mons: list[dict]) -> None:
     await cap.stop()
     fh.close()
 
-    check("kadrlar keldi", len(units) > 20, f"{len(units)} kadr")
-    check("kalit kadr bor", any(k for _, k in units),
-          f"{sum(1 for _, k in units if k)} ta")
-    check("birinchi kadr kalit", bool(units and units[0][1]),
-          "yangi tomoshabin darhol ko'radi" if units and units[0][1] else "kutish kerak bo'ladi")
-    check("kodek satri aniqlandi", bool(codec and codec.startswith("avc1.")), codec or "yo'q")
-    check("o'lcham to'g'ri", cap.width == 1280, f"{cap.width}x{cap.height}")
+    check("frames arrived", len(units) > 20, f"{len(units)} frames")
+    check("a key frame is present", any(k for _, k in units),
+          f"{sum(1 for _, k in units if k)}")
+    check("the first frame is a key frame", bool(units and units[0][1]),
+          "a new viewer sees it at once" if units and units[0][1] else "there will be a wait")
+    check("codec string determined", bool(codec and codec.startswith("avc1.")), codec or "none")
+    check("size is right", cap.width == 1280, f"{cap.width}x{cap.height}")
 
-    # Eng muhim tekshiruv: ajratib qayta yig'ilgan oqim buzilmadimi.
+    # The most important check: is the split-and-reassembled stream intact.
     probe = shutil.which("ffprobe") or str(Path(caps.path).with_name("ffprobe.exe"))
     if Path(probe).exists() or shutil.which("ffprobe"):
         r = subprocess.run(
@@ -240,23 +239,23 @@ async def test_capture(caps: ff.Capabilities, mons: list[dict]) -> None:
             capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         err = (r.stderr or "").strip()
-        check("oqim buzilmagan (ffmpeg dekodladi)", not err, err[:120] or "xatosiz")
+        check("the stream is intact (ffmpeg decoded it)", not err, err[:120] or "no errors")
     else:
-        check("oqim tekshiruvi", None, "ffprobe topilmadi")
+        check("stream check", None, "ffprobe not found")
 
 
-# ------------------------------------------------------- 4. server, protokol
+# ------------------------------------------------------- 4. server, protocol
 
 
 async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
-    section("4. Server va protokol")
+    section("4. The server and the protocol")
 
     cfg = cfgmod.load()
     cfg.port = free_port()
     cfg.bind = "127.0.0.1"
     server = HostServer(cfg, caps)
     await server.start()
-    check("HTTPS server ko'tarildi", True, f"port {cfg.port}, sertifikat o'z-imzo")
+    check("HTTPS server came up", True, f"port {cfg.port}, self-signed certificate")
 
     sslctx = ssl.create_default_context()
     sslctx.check_hostname = False
@@ -265,28 +264,28 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
 
     try:
         async with aiohttp.ClientSession() as sess:
-            # -- ruxsat
-            for label, url in (("noto'g'ri kalit", f"{base}/ws?k=xxx"), ("kalitsiz", f"{base}/ws")):
+            # -- authorisation
+            for label, url in (("a wrong key", f"{base}/ws?k=xxx"), ("no key", f"{base}/ws")):
                 try:
                     async with sess.ws_connect(url, ssl=sslctx):
-                        check(f"{label} rad etildi", False, "ruxsat berildi!")
+                        check(f"{label} was refused", False, "it was allowed!")
                 except aiohttp.WSServerHandshakeError as e:
-                    check(f"{label} rad etildi", e.status == 401, f"HTTP {e.status}")
+                    check(f"{label} was refused", e.status == 401, f"HTTP {e.status}")
 
-            # -- to'liq sessiya
+            # -- a full session
             async with sess.ws_connect(f"{base}/ws?k={cfg.token}", ssl=sslctx) as ws:
                 hello = json.loads((await ws.receive()).data)
-                check("hello keldi", hello.get("t") == "hello",
+                check("hello arrived", hello.get("t") == "hello",
                       f"{hello.get('host', {}).get('name', '?')}, "
-                      f"{len(hello.get('host', {}).get('monitors', []))} ekran")
+                      f"{len(hello.get('host', {}).get('monitors', []))} screens")
 
                 await ws.send_json({"t": "view", "on": True, "width": 854,
                                     "fps": 24, "bitrate": 2000})
 
-                # Kutish oldingidan uzunroq: ddagrab birinchi kadrni
-                # ekran o'zgarganda beradi va ish stoli qimirlamay
-                # tursa agent gdigrab'ga o'tadi. Shu o'tish vaqti ham
-                # sig'ishi kerak.
+                # A longer wait than before: ddagrab gives its first
+                # frame when the screen changes, and with a still
+                # desktop the agent falls back to gdigrab. That
+                # switchover has to fit inside the wait too.
                 stream, frames, keys, total = None, 0, 0, 0
                 end = time.monotonic() + 15
                 while time.monotonic() < end and (frames < 40 or not stream):
@@ -305,15 +304,15 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                         if flags & 1:
                             keys += 1
 
-                check("stream xabari", stream is not None,
+                check("stream message", stream is not None,
                       f"{stream['codec']} {stream['w']}x{stream['h']} {stream['encoder']}"
-                      if stream else "kelmadi")
-                check("video kadrlari", frames > 20, f"{frames} kadr, {total // 1024} KB")
-                check("kalit kadr", keys >= 1, f"{keys} ta")
-                check("sozlama qo'llandi", bool(stream and stream["w"] == 854),
-                      f"so'ralgan 854, kelgan {stream['w'] if stream else '?'}")
+                      if stream else "did not arrive")
+                check("video frames", frames > 20, f"{frames} frames, {total // 1024} KB")
+                check("key frame", keys >= 1, f"{keys}")
+                check("the setting was applied", bool(stream and stream["w"] == 854),
+                      f"asked for 854, got {stream['w'] if stream else '?'}")
 
-                # -- kiritish protokol orqali
+                # -- input through the protocol
                 from pult.platform import input_backend
 
                 wi = input_backend()
@@ -326,8 +325,8 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                 latency: list[float] = []
 
                 def send_via_protocol(tx: int, ty: int) -> None:
-                    # Sinxron funksiyadan asinxron yuborish: o'lchov mantig'i
-                    # ikkala testda bir xil bo'lishi uchun shunday qilingan.
+                    # Sending asynchronously from a synchronous function,
+                    # so that both tests share the same measuring logic.
                     nx = (tx - mon["x"]) / (mon["w"] - 1)
                     ny = (ty - mon["y"]) / (mon["h"] - 1)
                     t0 = time.monotonic()
@@ -341,25 +340,25 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                 worst, noisy = await asyncio.to_thread(
                     measure_pointer, wi, targets, send_via_protocol
                 )
-                detail = f"xato {worst} px"
+                detail = f"error {worst} px"
                 if latency:
-                    detail += f", yuborish {sum(latency) / len(latency):.0f} ms"
+                    detail += f", send {sum(latency) / len(latency):.0f} ms"
                 if worst > 2 and noisy:
-                    check("protokol orqali sichqoncha", None,
-                          "o'lchab bo'lmadi - sichqoncha ishlatilmoqda")
+                    check("mouse through the protocol", None,
+                          "could not measure - the mouse is in use")
                 else:
-                    check("protokol orqali sichqoncha", worst <= 2, detail)
+                    check("mouse through the protocol", worst <= 2, detail)
                 wi.move_to(*saved)
 
-                # -- ko'p ekranli xatti-harakat
+                # -- multi-screen behaviour
                 if len(mons) >= 2:
                     a, b = mons[0], mons[1]
 
-                    # -- kursor ekranlar orasida yursin: ko'rinish ergashadi
+                    # -- let the cursor cross screens: the view follows
                     await ws.send_json({"t": "view", "on": True,
                                         "monitor": a["index"], "follow": True})
                     await asyncio.sleep(0.5)
-                    # Qo'shni ekranga YAQIN chetdan boshlaymiz
+                    # Start from the edge NEAR the neighbouring screen
                     toward = 1 if b["x"] > a["x"] else -1
                     start_x = a["x"] + a["w"] - 5 if toward > 0 else a["x"] + 5
                     wi.move_to(start_x, a["y"] + a["h"] // 2)
@@ -372,18 +371,19 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                     gx, gy = wi.cursor_pos()
                     crossed = (b["x"] <= gx < b["x"] + b["w"])
                     followed = server.ctx.cfg.stream.monitor == b["index"]
-                    check("kursor ikkinchi ekranga o'ta oladi", crossed, f"kursor ({gx},{gy})")
-                    check("ko'rinish kursorga ergashdi", followed,
-                          f"server {server.ctx.cfg.stream.monitor + 1}-ekranni ko'rsatyapti")
+                    check("the cursor can cross to the second screen", crossed,
+                          f"cursor ({gx},{gy})")
+                    check("the view followed the cursor", followed,
+                          f"the server is showing screen {server.ctx.cfg.stream.monitor + 1}")
 
-                    # -- endi chegaralash rejimi
+                    # -- now the clamped mode
                     await ws.send_json({"t": "view", "on": True,
                                         "monitor": a["index"], "follow": False})
                     await asyncio.sleep(0.5)
 
-                    # Kursorni ataylab BOSHQA ekranga qo'yamiz va kichkina
-                    # harakat yuboramiz: kursor ko'rilayotgan ekranga
-                    # qaytishi, lekin chekkaga sakramasligi kerak
+                    # Deliberately put the cursor on the OTHER screen and
+                    # send a tiny movement: it should come back to the
+                    # watched screen without jumping to the edge
                     wi.move_to(b["x"] + b["w"] // 2, b["y"] + b["h"] // 2)
                     await asyncio.sleep(0.1)
                     await ws.send_json({"t": "mouse", "a": "moveby", "dx": 3, "dy": 0})
@@ -391,32 +391,33 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                     gx, gy = wi.cursor_pos()
                     inside = (a["x"] <= gx < a["x"] + a["w"]) and (a["y"] <= gy < a["y"] + a["h"])
                     centered = abs(gx - (a["x"] + a["w"] // 2)) < 40
-                    check("boshqa ekranda qolgan kursor qaytariladi", inside and centered,
-                          f"kursor ({gx},{gy}), chekkaga sakramadi" if centered
-                          else f"kursor ({gx},{gy}) - chekkaga sakradi")
+                    check("a cursor left on another screen is brought back",
+                          inside and centered,
+                          f"cursor ({gx},{gy}), did not jump to the edge" if centered
+                          else f"cursor ({gx},{gy}) - jumped to the edge")
 
-                    # Katta harakat ham ekrandan chiqarib yubormasin
+                    # A large movement must not push it off the screen either
                     for _ in range(6):
                         await ws.send_json({"t": "mouse", "a": "moveby", "dx": 900, "dy": 900})
                         await asyncio.sleep(0.06)
                     gx, gy = wi.cursor_pos()
                     inside = (a["x"] <= gx < a["x"] + a["w"]) and (a["y"] <= gy < a["y"] + a["h"])
-                    check("trackpad ko'rilayotgan ekrandan chiqmaydi", inside,
-                          f"kursor ({gx},{gy}), {a['index'] + 1}-ekran "
+                    check("the trackpad stays on the watched screen", inside,
+                          f"cursor ({gx},{gy}), screen {a['index'] + 1} "
                           f"x:{a['x']}..{a['x'] + a['w']}")
 
-                    # Ekran almashtirilsa kursor o'sha ekranga o'tsin
+                    # Switching screens should move the cursor there
                     await ws.send_json({"t": "view", "on": True, "monitor": b["index"]})
                     await asyncio.sleep(0.6)
                     gx, gy = wi.cursor_pos()
                     moved = (b["x"] <= gx < b["x"] + b["w"]) and (b["y"] <= gy < b["y"] + b["h"])
-                    check("ekran almashtirilsa kursor ko'chadi", moved, f"kursor ({gx},{gy})")
+                    check("switching screens moves the cursor", moved, f"cursor ({gx},{gy})")
                     await ws.send_json({"t": "view", "on": True, "monitor": a["index"]})
                     await asyncio.sleep(0.5)
                 else:
-                    check("ko'p ekranli xatti-harakat", None, "ikkinchi ekran yo'q")
+                    check("multi-screen behaviour", None, "no second screen")
 
-                # -- juda kichik harakatlar yo'qolmasligi
+                # -- very small movements must not get lost
                 wi.move_to(mons[0]["x"] + 600, mons[0]["y"] + 400)
                 await asyncio.sleep(0.15)
                 bx, by = wi.cursor_pos()
@@ -425,10 +426,10 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                     await asyncio.sleep(0.03)
                 await asyncio.sleep(0.2)
                 ax, _ay = wi.cursor_pos()
-                check("sekin harakat yo'qolmaydi", abs((ax - bx) - 6) <= 2,
-                      f"20 x 0.3px = 6px kutildi, {ax - bx}px bo'ldi")
+                check("slow movement is not lost", abs((ax - bx) - 6) <= 2,
+                      f"expected 20 x 0.3px = 6px, got {ax - bx}px")
 
-                # -- xatolar
+                # -- errors
                 async def next_error():
                     end2 = time.monotonic() + 4
                     while time.monotonic() < end2:
@@ -439,46 +440,49 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                                 return d
                     return {}
 
-                await ws.send_json({"t": "yoq_bunday"})
-                check("noma'lum xabar rad etildi", (await next_error()).get("t") == "error")
-                await ws.send_json({"t": "key", "a": "tap", "k": "YOQ_BUNDAY"})
-                check("noma'lum klavish rad etildi", (await next_error()).get("t") == "error")
+                await ws.send_json({"t": "no_such_thing"})
+                check("an unknown message was refused",
+                      (await next_error()).get("t") == "error")
+                await ws.send_json({"t": "key", "a": "tap", "k": "NO_SUCH_KEY"})
+                check("an unknown key was refused",
+                      (await next_error()).get("t") == "error")
 
                 await ws.send_json({"t": "view", "on": False})
                 await asyncio.sleep(0.4)
-                check("tomoshabin ketgach oqim to'xtadi", not server.ctx.capture.running,
-                      "bo'sh turganda resurs sarflanmaydi")
+                check("the stream stopped once the viewer left",
+                      not server.ctx.capture.running,
+                      "nothing is spent while idle")
 
-            # -- telefonni manba sifatida ulash (teskari boshqaruv)
+            # -- connecting a phone as a source (control the other way)
             await test_phone_source(sess, base, sslctx, cfg)
 
-            # -- ochiq ma'lumot
+            # -- the public info
             async with sess.get(f"{base}/api/info", ssl=sslctx) as r:
                 info = await r.json()
-                check("/api/info kalitsiz faqat nom beradi",
+                check("/api/info gives only the name without a key",
                       "monitors" not in info and "name" in info, str(info)[:70])
     finally:
         await server.stop()
 
 
-# ------------------------------------------------- 5. teskari boshqaruv
+# --------------------------------------------- 5. control the other way
 
 
 async def test_phone_source(sess, base, sslctx, cfg) -> None:
-    """Telefon "manba" bo'lib ulanadi, brauzer uni ko'radi va boshqaradi.
+    """A phone connects as a "source"; the browser watches and controls it.
 
-    Haqiqiy telefonsiz tekshiriladi: soxta mijoz telefonning o'rnini
-    bosadi. Bu marshrutlashning butun yo'lini qamrab oladi - manba
-    ro'yxatga tushishi, kadrlarning to'g'ri tomoshabinga borishi va
-    kiritishning kompyuterga emas, telefonga ketishi.
+    Tested without a real phone: a fake client stands in for one. This
+    covers the whole routing path - the source appearing in the list,
+    frames reaching the right viewer, and input going to the phone
+    rather than to the computer.
     """
-    section("5. Teskari boshqaruv (telefon manba sifatida)")
+    section("5. Control the other way (a phone as the source)")
 
     url = f"{base}/ws?k={cfg.token}"
     async with sess.ws_connect(url, ssl=sslctx) as phone:
         await phone.receive()      # hello
         await phone.send_json({
-            "t": "hello", "role": "source", "name": "Sinov telefoni",
+            "t": "hello", "role": "source", "name": "Test phone",
             "info": {"kind": "phone", "w": 1080, "h": 2400, "input": True},
         })
         await asyncio.sleep(0.3)
@@ -486,12 +490,12 @@ async def test_phone_source(sess, base, sslctx, cfg) -> None:
         async with sess.ws_connect(url, ssl=sslctx) as viewer:
             hello = json.loads((await viewer.receive()).data)
             names = [x["name"] for x in hello.get("sources", [])]
-            check("manba ro'yxatga tushdi", "Sinov telefoni" in names, ", ".join(names))
+            check("the source appeared in the list", "Test phone" in names, ", ".join(names))
 
-            await viewer.send_json({"t": "hello", "role": "controller", "name": "sinov"})
+            await viewer.send_json({"t": "hello", "role": "controller", "name": "test"})
             src_id = next(x["id"] for x in hello["sources"] if x["kind"] == "phone")
 
-            # Tomoshabin telefonni tanlaydi -> telefonga "oqimni boshla" kelishi kerak
+            # The viewer picks the phone -> the phone should get "start streaming"
             await viewer.send_json({"t": "view", "on": True, "source": src_id})
             start = None
             end = time.monotonic() + 4
@@ -502,10 +506,11 @@ async def test_phone_source(sess, base, sslctx, cfg) -> None:
                     if d.get("t") == "stream_start":
                         start = d
                         break
-            check("telefonga oqim so'rovi keldi", start is not None,
-                  f"{start.get('width')}px {start.get('fps')} k/s" if start else "kelmadi")
+            check("the phone received the stream request", start is not None,
+                  f"{start.get('width')}px {start.get('fps')} fps" if start
+                  else "did not arrive")
 
-            # Telefon oqim haqida xabar berib, kadr yuboradi
+            # The phone describes its stream and sends frames
             await phone.send_json({"t": "stream", "codec": "avc1.42E01E",
                                    "w": 1080, "h": 2400, "fps": 30})
             for i in range(5):
@@ -526,11 +531,11 @@ async def test_phone_source(sess, base, sslctx, cfg) -> None:
                         got_stream = d
                 elif m.type == aiohttp.WSMsgType.BINARY:
                     frames += 1
-            check("telefon oqimi tomoshabinga yetdi", got_stream is not None,
-                  got_stream.get("codec") if got_stream else "yetmadi")
-            check("telefon kadrlari uzatildi", frames >= 4, f"{frames} kadr")
+            check("the phone's stream reached the viewer", got_stream is not None,
+                  got_stream.get("codec") if got_stream else "did not arrive")
+            check("the phone's frames were routed", frames >= 4, f"{frames} frames")
 
-            # Kiritish kompyuterga emas, telefonga borishi kerak
+            # Input has to go to the phone, not to the computer
             saved = None
             try:
                 from pult.platform import input_backend
@@ -548,22 +553,22 @@ async def test_phone_source(sess, base, sslctx, cfg) -> None:
                     if d.get("t") == "mouse":
                         forwarded = d
                         break
-            check("kiritish telefonga yo'naltirildi", forwarded is not None,
+            check("input was forwarded to the phone", forwarded is not None,
                   f"{forwarded.get('a')} ({forwarded.get('x')},{forwarded.get('y')})"
-                  if forwarded else "yetmadi")
+                  if forwarded else "did not arrive")
             if saved:
                 now = input_backend().cursor_pos()
-                check("kompyuter kursoriga tegilmadi", now == saved, str(now))
+                check("the computer's cursor was left alone", now == saved, str(now))
 
             await viewer.send_json({"t": "view", "on": False})
             await asyncio.sleep(0.3)
 
-    # Telefon uzildi - tomoshabin xabardor bo'lishi kerak
+    # The phone dropped - the viewer has to be told
     await asyncio.sleep(0.4)
     async with sess.ws_connect(url, ssl=sslctx) as v2:
         hello = json.loads((await v2.receive()).data)
         kinds = [x["kind"] for x in hello.get("sources", [])]
-        check("uzilgan manba ro'yxatdan chiqdi", "phone" not in kinds,
+        check("the dropped source left the list", "phone" not in kinds,
               ", ".join(kinds))
 
 
@@ -571,13 +576,13 @@ async def test_phone_source(sess, base, sslctx, cfg) -> None:
 
 
 async def main() -> int:
-    print("Pult - o'z-o'zini tekshiruv")
-    print("Sichqonchaga tegmang: test kursorni harakatlantirib aniqlikni o'lchaydi.")
-    print(f"Vaqtinchalik sozlamalar: {_TMP}")
+    print("Pult - self-test")
+    print("Keep off the mouse: the test moves the cursor to measure accuracy.")
+    print(f"Temporary settings: {_TMP}")
 
     caps = test_environment()
     if caps is None:
-        print("\nffmpeg'siz davom etib bo'lmaydi.")
+        print("\nThere is no going on without ffmpeg.")
         return 2
 
     mons = test_input()
@@ -585,15 +590,15 @@ async def main() -> int:
         await test_capture(caps, mons)
         await test_protocol(caps, mons)
 
-    section("Natija")
+    section("Result")
     bad = [r for r in results if r[0] == FAIL]
     skipped = [r for r in results if r[0] == SKIP]
-    print(f"  o'tdi: {sum(1 for r in results if r[0] == PASS)}"
-          f"   xato: {len(bad)}   o'tkazildi: {len(skipped)}")
+    print(f"  passed: {sum(1 for r in results if r[0] == PASS)}"
+          f"   failed: {len(bad)}   skipped: {len(skipped)}")
     for _, name, detail in bad:
-        print(f"    XATO: {name} - {detail}")
+        print(f"    FAIL: {name} - {detail}")
     print()
-    print("  HAMMASI JOYIDA" if not bad else "  MUAMMO BOR")
+    print("  ALL GOOD" if not bad else "  SOMETHING IS WRONG")
     return 0 if not bad else 1
 
 

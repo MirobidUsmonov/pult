@@ -24,15 +24,15 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 
 /**
- * Kichik WebSocket mijozi.
+ * A small WebSocket client.
  *
- * Nega qo'lda yozilgan: Android'da tayyor WebSocket mijozi faqat 13-versiyadan
- * boshlab bor, kutubxona qo'shish esa 69 KB lik ilovani bir necha megabaytga
- * shishirardi. Bizga kerak bo'lgani - qo'l siqish, matn va ikkilik kadr
- * yuborish, ping'ga javob berish. Bu RFC 6455 ning kichik bir qismi.
+ * Why it is written by hand: Android only ships a WebSocket client from
+ * version 13 on, and adding a library would have blown a 69 KB app up to
+ * several megabytes. All we need is the handshake, sending text and
+ * binary frames, and answering pings - a small corner of RFC 6455.
  *
- * Sertifikat bog'lash ham shu yerda: faqat ilova eslab qolgan sertifikat
- * qabul qilinadi, boshqasi bilan ulanish rad etiladi.
+ * Certificate pinning lives here too: only the certificate the app
+ * remembered is accepted, and a connection with any other is refused.
  */
 public class WsClient {
 
@@ -80,14 +80,13 @@ public class WsClient {
         }
     }
 
-    // ------------------------------------------------------------ ulanish
+    // --------------------------------------------------------- connection
 
     private void run() {
-        // Xabar berilganini kuzatamiz: readLoop odatiy tugaganda (server
-        // o'zi yopganda) istisno bo'lmaydi va ilgari hech kim
-        // xabardor qilinmasdi. Shunda ekran uzatish xizmati ishlab
-        // qolaverar va Android tepada qizil ko'rsatkichni ko'rsatib
-        // turaverardi.
+        // Track whether anyone was told: when readLoop ends normally
+        // (the server closed it) no exception is thrown, and nobody used
+        // to be notified. The screen-sharing service then kept running
+        // and Android kept showing the red indicator at the top.
         boolean told = false;
         try {
             Uri u = Uri.parse(url);
@@ -99,7 +98,7 @@ public class WsClient {
 
             SocketFactory factory = secure ? pinnedFactory() : SocketFactory.getDefault();
             socket = factory.createSocket(host, port);
-            socket.setTcpNoDelay(true);          // kadrlar kechikmasdan ketsin
+            socket.setTcpNoDelay(true);          // frames go out without delay
             socket.setSoTimeout(0);
 
             in = new BufferedInputStream(socket.getInputStream(), 16 * 1024);
@@ -110,7 +109,7 @@ public class WsClient {
             listener.onOpen();
             readLoop();
         } catch (Exception e) {
-            Log.w(TAG, "ulanish uzildi: " + e);
+            Log.w(TAG, "the connection dropped: " + e);
             running.set(false);
             told = true;
             listener.onClosed(String.valueOf(e.getMessage()));
@@ -120,16 +119,16 @@ public class WsClient {
                 if (socket != null) socket.close();
             } catch (IOException ignored) {
             }
-            if (!told) listener.onClosed("ulanish yopildi");
+            if (!told) listener.onClosed("the connection was closed");
         }
     }
 
     /**
-     * Faqat eslab qolingan sertifikatni qabul qiladigan ulanish.
+     * A connection that accepts only the remembered certificate.
      *
-     * Oddiy "hammasiga ishonish" xavfli bo'lardi: mahalliy tarmoqda kimdir
-     * o'zini kompyuter deb ko'rsatib, butun boshqaruvni qo'lga olishi
-     * mumkin. Iz solishtirilgani uchun bunday ulanish rad etiladi.
+     * A plain "trust everything" would be dangerous: on a local network
+     * someone could pose as the computer and take over all control.
+     * With the fingerprint compared, such a connection is refused.
      */
     private SSLSocketFactory pinnedFactory() throws Exception {
         final String expected = pin;
@@ -142,16 +141,17 @@ public class WsClient {
             public void checkServerTrusted(X509Certificate[] chain, String authType)
                     throws CertificateException {
                 if (chain == null || chain.length == 0) {
-                    throw new CertificateException("sertifikat yo'q");
+                    throw new CertificateException("no certificate");
                 }
                 if (expected.isEmpty()) {
-                    // Iz hali saqlanmagan - ulanishga ruxsat bermaymiz.
-                    // Iz WebView orqali birinchi ulanishda olinadi.
-                    throw new CertificateException("sertifikat izi hali tasdiqlanmagan");
+                    // No fingerprint stored yet - refuse the connection.
+                    // The fingerprint is taken on the first connection
+                    // through the WebView.
+                    throw new CertificateException("the certificate fingerprint is not confirmed yet");
                 }
                 String actual = sha256(chain[0].getEncoded());
                 if (!expected.equalsIgnoreCase(actual)) {
-                    throw new CertificateException("sertifikat mos kelmadi");
+                    throw new CertificateException("the certificate did not match");
                 }
             }
 
@@ -198,10 +198,10 @@ public class WsClient {
         if (statusLine == null || !statusLine.contains(" 101")) {
             throw new IOException("qo'l siqish rad etildi: " + statusLine);
         }
-        // Qolgan sarlavhalarni bo'sh qatorgacha o'qib tashlaymiz
+        // Read the remaining headers up to the blank line and drop them
         String line;
         while ((line = readLine()) != null && !line.isEmpty()) {
-            // sarlavhalar bizga kerak emas
+            // we have no use for the headers
         }
     }
 
@@ -246,17 +246,17 @@ public class WsClient {
             }
 
             switch (opcode) {
-                case 0x1:  // matn
+                case 0x1:  // text
                     listener.onText(new String(payload, StandardCharsets.UTF_8));
                     break;
-                case 0x8:  // yopish
+                case 0x8:  // close
                     running.set(false);
                     return;
                 case 0x9:  // ping -> pong
                     sendFrame(0xA, payload, 0, payload.length);
                     break;
                 default:
-                    // ikkilik va boshqalar bizga kelmaydi
+                    // binary and the rest never reach us
                     break;
             }
         }
@@ -266,7 +266,7 @@ public class WsClient {
         int off = 0;
         while (off < buf.length) {
             int n = in.read(buf, off, buf.length - off);
-            if (n < 0) throw new IOException("ulanish uzildi");
+            if (n < 0) throw new IOException("the connection dropped");
             off += n;
         }
     }
@@ -286,7 +286,7 @@ public class WsClient {
         if (!running.get() || out == null) return;
         try {
             out.write(0x80 | opcode);
-            // Mijozdan serverga ketadigan kadrlar niqoblanishi shart
+            // Frames going from client to server have to be masked
             if (len < 126) {
                 out.write(0x80 | len);
             } else if (len < 65536) {

@@ -3,18 +3,18 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Ekranni uzatish uchun: xizmat oldingi planda ishlashi shart,
-         aks holda Android uni o'chirib qo'yadi -->
+    <!-- For screen sharing: the service has to run in the foreground,
+         or Android shuts it down -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Ekran o'chganda tizim protsessorni to'xtatadi va Wi-Fi ni
-         uxlatadi - ulanish uziladi. Bu ruxsatlar uzatish davomida
-         qulf olib turish uchun. -->
+    <!-- With the screen off the system stops the CPU and puts Wi-Fi to
+         sleep, and the connection drops. These permissions let us hold
+         a lock while sharing. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- Batareya tejash ilovani ekran o'chgach o'ldiradi. Bu ruxsat
-         foydalanuvchidan istisno so'rash imkonini beradi - qaror
-         baribir uniki. -->
+    <!-- Battery saving kills the app once the screen is off. This
+         permission lets us ask the user for an exemption - the decision
+         stays theirs. -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
@@ -39,32 +39,31 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Kompyuterdagi ulash sahifasidagi QR kod shu ko'rinishda
-                 bo'ladi: telefon kamerasi bilan skanerlansa ilova ochiladi -->
+            <!-- The QR code on the computer's pairing page has this
+                 shape: scanned with the phone camera it opens the app -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="pult" />
             </intent-filter>
-            <!-- Telegramga kelgan tunnel havolasi. Tunnel manzili
-                 kompyuter har qayta yonganda o'zgaradi, shuning uchun
-                 uni ilovaga qo'lda ko'chirish o'rniga havolani bosish
-                 kifoya: Android "Pult bilan ochish" ni taklif qiladi
-                 va ilova manzilni o'zi yangilaydi.
+            <!-- The tunnel link that arrives in Telegram. The tunnel
+                 address changes every time the computer restarts, so
+                 rather than copying it into the app by hand, tapping the
+                 link is enough: Android offers "Open with Pult" and the
+                 app updates the address itself.
 
-                 Domen bizniki emas, shuning uchun autoVerify yo'q -
-                 Android tanlov oynasini ko'rsatadi. Bu to'g'ri: hamma
-                 trycloudflare havolalarini ushlab olish noto'g'ri
-                 bo'lardi. -->
+                 The domain is not ours, so there is no autoVerify -
+                 Android shows a chooser. That is right: grabbing every
+                 trycloudflare link would be wrong. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="*.trycloudflare.com" />
             </intent-filter>
-            <!-- Havolani "Ulashish" orqali yuborish ham ishlaydi: bu
-                 har qanday tunnel yoki domen uchun yagona umumiy yo'l. -->
+            <!-- Sending the link through "Share" works too: it is the
+                 one route that fits any tunnel or domain. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -72,19 +71,21 @@
             </intent-filter>
         </activity>
 
-        <!-- Ekranni uzatuvchi xizmat. mediaProjection turi majburiy:
-             Android 14 dan boshlab usiz ekran olishga ruxsat berilmaydi. -->
+        <!-- The screen-sharing service. The mediaProjection type is
+             mandatory: from Android 14 on, capture is refused without
+             it. -->
         <service
             android:name=".ScreenService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
-        <!-- Kiritish xizmati. Foydalanuvchi uni sozlamalardan qo'lda
-             yoqadi - bu Android himoyasi, chetlab o'tib bo'lmaydi. -->
+        <!-- The input service. The user turns it on by hand in the
+             settings - that is an Android protection and cannot be
+             worked around. -->
         <service
             android:name=".InputService"
             android:exported="true"
-            android:label="Pult — telefonni boshqarish"
+            android:label="Pult — control this phone"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
