@@ -1,0 +1,347 @@
+"""
+O'rnatish: bitta faylni ochish bilan hammasini sozlash.
+
+Maqsad - yangi kompyuterga Pult qo'yish uchun bitta fayldan boshqa
+hech narsa kerak bo'lmasin. Python o'rnatish, ffmpeg izlash,
+cloudflared yuklab olish, vazifa rejalashtiruvchisini ochish - bularning
+hammasi shu yerda avtomatlashtirilgan.
+
+Dastur o'zini bir marta doimiy joyga ko'chiradi va o'sha yerdan ishlaydi.
+Ko'chirish shart: odam faylni Yuklamalar papkasidan ishga tushiradi,
+keyin uni o'chiradi yoki ko'chiradi va avtomatik ishga tushirish
+buziladi.
+
+Sozlamalar dastur yonidagi "data" papkasida saqlanadi. Bu ataylab:
+ba'zi muhitlarda AppData boshqa papkaga yo'naltiriladi va shunda
+ikkita alohida sozlama paydo bo'lib, kalitlar mos kelmay qoladi.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+log = logging.getLogger("pult.setup")
+
+TASK_NAME = "Pult"
+EXE_NAME = "Pult.exe"
+
+# Konsol oynasi ochilmasligi kerak
+NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+
+def install_dir() -> Path:
+    base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    return Path(base) / "Pult"
+
+
+def frozen_exe() -> Path | None:
+    """Ishlab turgan .exe. Manba kodidan ishga tushirilgan bo'lsa - None."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve()
+    return None
+
+
+def is_installed() -> bool:
+    exe = frozen_exe()
+    return exe is not None and exe.parent == install_dir()
+
+
+def bundled(name: str) -> Path | None:
+    """.exe ichiga qo'shilgan yordamchi faylni topadi."""
+    base = getattr(sys, "_MEIPASS", None)
+    if not base:
+        return None
+    path = Path(base) / name
+    return path if path.is_file() else None
+
+
+def preset() -> dict:
+    """Yig'ishda ichiga solingan tayyor sozlamalar.
+
+    Birinchi kompyuterda sozlangan Telegram boti va tunnel rejimi
+    shu yo'l bilan ikkinchi kompyuterga o'tadi - u yerda hech narsa
+    sozlash kerak bo'lmaydi.
+    """
+    path = bundled("preset.json")
+    if not path:
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        log.warning("preset.json o'qilmadi", exc_info=True)
+        return {}
+
+
+def message(text: str, title: str = "Pult", icon: int = 0x40) -> None:
+    """Xabar oynasi. Konsol yo'q, shuning uchun print bermaydi."""
+    if sys.platform == "win32":
+        import ctypes
+
+        ctypes.WinDLL("user32").MessageBoxW(None, text, title, icon)
+    else:
+        print(f"{title}: {text}")
+
+
+def ask(text: str, title: str = "Pult") -> bool:
+    if sys.platform != "win32":
+        return True
+    import ctypes
+
+    # MB_OKCANCEL | MB_ICONQUESTION
+    return ctypes.WinDLL("user32").MessageBoxW(None, text, title, 0x21) == 1
+
+
+# ------------------------------------------------------------ vazifa
+
+def _powershell(script: str) -> subprocess.CompletedProcess:
+    """PowerShell buyrug'ini konsolsiz bajaradi.
+
+    -Command ishlatiladi, skript fayli emas: skript fayllariga
+    qo'yiladigan ishga tushirish siyosati bu yo'lga tegmaydi.
+    """
+    return subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive",
+         "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+         "-Command", script],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        creationflags=NO_WINDOW,
+    )
+
+
+def _ps_quote(text: str) -> str:
+    return "'" + str(text).replace("'", "''") + "'"
+
+
+def register_task(exe: Path) -> bool:
+    """Kirganda avtomatik ishga tushirishni qo'shadi.
+
+    Vazifa ataylab oddiy foydalanuvchi huquqi bilan va "kirganda"
+    yaratiladi. Sababi Windows'da sichqoncha va klaviatura hodisalarini
+    yuborish uchun dastur foydalanuvchi seansida ishlashi shart. Xizmat
+    sifatida qo'yilsa u 0-seansda qoladi va ish stoliga umuman ta'sir
+    qilolmaydi - bu ko'p odam qoqiladigan joy.
+
+    Register-ScheduledTask ishlatiladi, schtasks.exe emas: sinovda
+    schtasks "Access is denied" berdi, PowerShell orqali esa o'sha
+    vazifa muammosiz yaratildi. schtasks baribir zaxira yo'l sifatida
+    qoldirilgan - boshqa kompyuterda teskarisi bo'lishi mumkin.
+    """
+    if sys.platform != "win32":
+        return False
+
+    script = (
+        "$ErrorActionPreference='Stop';"
+        f"$exe={_ps_quote(exe)};"
+        f"$dir={_ps_quote(exe.parent)};"
+        "$u=\"$env:USERDOMAIN\\$env:USERNAME\";"
+        "$a=New-ScheduledTaskAction -Execute $exe -WorkingDirectory $dir;"
+        "$t=New-ScheduledTaskTrigger -AtLogOn -User $u;"
+        # Tarmoq ko'tarilishini kutamiz: dastur IP manzil berilmasidan
+        # oldin ishga tushsa, sertifikatni noto'g'ri manzil bilan yasaydi
+        "$t.Delay='PT15S';"
+        "$s=New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries"
+        " -DontStopIfGoingOnBatteries -StartWhenAvailable"
+        " -ExecutionTimeLimit ([TimeSpan]::Zero)"
+        " -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1);"
+        "$p=New-ScheduledTaskPrincipal -UserId $u -LogonType Interactive"
+        " -RunLevel Limited;"
+        f"Register-ScheduledTask -TaskName {_ps_quote(TASK_NAME)} -Action $a"
+        " -Trigger $t -Settings $s -Principal $p"
+        " -Description 'Pult - telefondan kompyuterni boshqarish agenti'"
+        " -Force | Out-Null"
+    )
+    r = _powershell(script)
+    if r.returncode == 0:
+        return True
+    log.warning("vazifa PowerShell orqali yaratilmadi: %s",
+                (r.stderr or r.stdout).strip()[:300])
+
+    fallback = subprocess.run(
+        ["schtasks", "/Create", "/TN", TASK_NAME, "/TR", f'"{exe}"',
+         "/SC", "ONLOGON", "/RL", "LIMITED", "/F"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        creationflags=NO_WINDOW,
+    )
+    if fallback.returncode == 0:
+        return True
+    log.warning("vazifa schtasks orqali ham yaratilmadi: %s",
+                (fallback.stderr or fallback.stdout).strip()[:300])
+    return False
+
+
+def remove_task() -> None:
+    if sys.platform != "win32":
+        return
+    r = _powershell(
+        f"Unregister-ScheduledTask -TaskName {_ps_quote(TASK_NAME)} "
+        "-Confirm:$false -ErrorAction Stop"
+    )
+    if r.returncode != 0:
+        subprocess.run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"],
+                       capture_output=True, creationflags=NO_WINDOW)
+
+
+# ------------------------------------------------------------ o'rnatish
+
+def install(quiet: bool = False) -> tuple[bool, str]:
+    """Dasturni doimiy joyga o'rnatadi. (muvaffaqiyat, xabar)"""
+    exe = frozen_exe()
+    if exe is None:
+        return False, ("O'rnatish faqat yig'ilgan .exe uchun ishlaydi.\n"
+                       "Manba kodidan: python -m pult")
+
+    target_dir = install_dir()
+    target = target_dir / EXE_NAME
+    data = target_dir / "data"
+
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        data.mkdir(exist_ok=True)
+        (data / "bin").mkdir(exist_ok=True)
+
+        # O'rnatgich ichida yengil Pult.exe bo'lsa - o'shani qo'yamiz.
+        # Bo'lmasa dastur o'zini ko'chiradi (Windows ishlab turgan
+        # faylni o'qishga ruxsat beradi, faqat yozishga bermaydi).
+        src = bundled(EXE_NAME) or exe
+        if src.resolve() != target:
+            shutil.copy2(src, target)
+
+        # Yordamchi dasturlar .exe ichida bo'lsa - yoniga chiqaramiz.
+        # Ular har ishga tushganda vaqtinchalik papkaga ochilmasin:
+        # cloudflared 50 MB dan ortiq va bu sezilarli kechikish.
+        for name in ("cloudflared-windows-amd64.exe", "ffmpeg.exe"):
+            src = bundled(name)
+            if src and not (data / "bin" / name).exists():
+                shutil.copy2(src, data / "bin" / name)
+    except Exception as exc:
+        return False, f"Fayllarni ko'chirib bo'lmadi:\n{exc}"
+
+    # Sozlamalar shu yerda yaratilsin
+    os.environ["PULT_CONFIG_DIR"] = str(data)
+    from . import config as cfgmod
+
+    cfg = cfgmod.load(data / "config.json")
+    p = preset()
+    cfg.remote.mode = p.get("remote_mode", "cloudflare")
+    tg = p.get("telegram") or {}
+    if tg.get("bot_token") and tg.get("chat_id"):
+        cfg.telegram.enabled = True
+        cfg.telegram.on_start = True
+        cfg.telegram.bot_token = tg["bot_token"]
+        cfg.telegram.chat_id = str(tg["chat_id"])
+    ff = data / "bin" / "ffmpeg.exe"
+    if ff.is_file():
+        cfg.ffmpeg_path = str(ff)
+    # Yo'l aniq ko'rsatiladi: config_dir() muhit o'zgaruvchisiga
+    # tayanadi va uni shu jarayonda o'zgartirganimiz keyinroq
+    # chalkashlik tug'dirishi mumkin
+    cfgmod.save(cfg, data / "config.json")
+
+    ok_task = register_task(target)
+
+    lines = [f"Pult o'rnatildi: {target_dir}"]
+    lines.append("Kirganda avtomatik ishga tushadi."
+                 if ok_task else
+                 "Avtomatik ishga tushirishni qo'shib bo'lmadi - "
+                 "uni qo'lda sozlash kerak bo'ladi.")
+    if cfg.telegram.enabled:
+        lines.append("Kompyuter yonganda Telegramga xabar keladi.")
+    if cfg.remote.mode == "cloudflare":
+        if (data / "bin" / "cloudflared-windows-amd64.exe").is_file():
+            lines.append("Tashqi kirish tayyor - har qanday tarmoqdan ishlaydi.")
+        else:
+            lines.append("Tashqi kirish yoqildi - cloudflared birinchi ishga "
+                         "tushganda yuklab olinadi.")
+    return True, "\n".join(lines)
+
+
+def uninstall() -> str:
+    remove_task()
+    return ("Avtomatik ishga tushirish o'chirildi.\n\n"
+            f"Fayllar shu yerda qoldi: {install_dir()}\n"
+            "Sozlamalar ham o'sha papkada - kerak bo'lmasa qo'lda o'chiring.")
+
+
+def launch(exe: Path, pair: bool = True) -> None:
+    """O'rnatilgan nusxani ishga tushiradi va telefonni ulash sahifasini ochadi."""
+    try:
+        subprocess.Popen([str(exe)], cwd=str(exe.parent), creationflags=NO_WINDOW)
+    except Exception:
+        log.exception("ishga tushirib bo'lmadi")
+        return
+    if pair:
+        open_pairing(exe.parent / "data")
+
+
+def open_pairing(data: Path) -> None:
+    """Telefonni ulash sahifasini (QR kod) brauzerda ochadi.
+
+    O'rnatishning oxirgi qadami shu bo'lishi kerak: aks holda odam
+    dastur ishga tushganini ko'radi-yu, telefonni qanday ulashni
+    bilmay qoladi.
+    """
+    import time
+    import webbrowser
+
+    from . import config as cfgmod
+
+    try:
+        cfg = cfgmod.load(data / "config.json")
+        scheme = "http" if cfg.tls == "off" else "https"
+        url = f"{scheme}://127.0.0.1:{cfg.port}/pair?k={cfg.token}"
+        # Server ko'tarilishini kutamiz. Sertifikat birinchi marta
+        # yasalgani uchun bu bir necha soniya olishi mumkin.
+        deadline = time.monotonic() + 25
+        while time.monotonic() < deadline:
+            if _port_open(cfg.port):
+                webbrowser.open(url)
+                return
+            time.sleep(0.5)
+        log.warning("server ko'tarilmadi, ulash sahifasi ochilmadi")
+    except Exception:
+        log.exception("ulash sahifasini ochib bo'lmadi")
+
+
+def _port_open(port: int) -> bool:
+    import socket
+
+    with socket.socket() as s:
+        s.settimeout(0.4)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def first_run() -> bool:
+    """Birinchi ochilishda o'rnatishni taklif qiladi.
+
+    True qaytarsa - dastur o'rnatilgan nusxaga topshirdi va bu
+    jarayon chiqishi kerak.
+    """
+    exe = frozen_exe()
+    if exe is None or is_installed():
+        return False
+
+    if not ask(
+        "Pult shu kompyuterga o'rnatilsinmi?\n\n"
+        "• dastur doimiy papkaga ko'chiriladi\n"
+        "• kirganda o'zi ishga tushadi (terminal ochilmaydi)\n"
+        "• telefondan ulanish uchun QR kod ochiladi\n\n"
+        "Keyinroq o'chirish: Pult.exe --uninstall"
+    ):
+        # Rad etilsa ham dastur ishlayveradi, shunchaki o'rnatilmagan
+        # holda: odam avval sinab ko'rmoqchi bo'lishi mumkin
+        return False
+
+    ok, text = install()
+    if not ok:
+        message(text, "Pult o'rnatilmadi", 0x10)
+        return False
+
+    target = install_dir() / EXE_NAME
+    message(text + "\n\nEndi ishga tushiryapman.")
+    launch(target)
+    return True

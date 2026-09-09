@@ -67,6 +67,10 @@ def main() -> int:
                         help="HTTPS o'rniga oddiy HTTP (faqat tunnel orqasida)")
     parser.add_argument("--show", action="store_true",
                         help="ulanish manzilini ko'rsatib chiqish")
+    parser.add_argument("--install", action="store_true",
+                        help="doimiy joyga o'rnatib, avtomatik ishga tushirishni qo'shish")
+    parser.add_argument("--uninstall", action="store_true",
+                        help="avtomatik ishga tushirishni o'chirish")
     parser.add_argument("--remote", choices=["off", "cloudflare"],
                         help="tashqi kirish: bitta Wi-Fi chegarasidan chiqish")
     parser.add_argument("--telegram", metavar="TOKEN",
@@ -77,6 +81,22 @@ def main() -> int:
 
     appmod.setup_logging(console=args.console or args.show or bool(args.telegram))
     cfg = _apply_args(cfgmod.load(), args)
+
+    if args.install or args.uninstall:
+        from . import setup as setupmod
+
+        if args.uninstall:
+            text = setupmod.uninstall()
+        else:
+            ok, text = setupmod.install()
+            if ok:
+                setupmod.launch(setupmod.install_dir() / setupmod.EXE_NAME)
+        # Konsoldan ishga tushirilgan bo'lsa matn ko'rinadi, .exe dan
+        # bosilgan bo'lsa - oyna. Ikkalasi ham kerak.
+        print(text)
+        if getattr(sys, "frozen", False):
+            setupmod.message(text)
+        return 0
 
     if args.remote:
         # Faylga yozamiz, shuning uchun buyruq qatoridagi boshqa
@@ -125,6 +145,15 @@ def main() -> int:
         try:
             return asyncio.run(run_headless(cfg, verbose=True))
         except KeyboardInterrupt:
+            return 0
+
+    # Yig'ilgan .exe birinchi marta ochilganda o'zini o'rnatishni
+    # taklif qiladi. Shu tufayli yangi kompyuterga bitta fayldan
+    # boshqa hech narsa kerak emas.
+    if getattr(sys, "frozen", False):
+        from . import setup as setupmod
+
+        if setupmod.first_run():
             return 0
 
     # Odatiy yo'l: trey. pystray bo'lmasa konsolsiz fon rejimida davom

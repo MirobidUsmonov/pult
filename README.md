@@ -321,6 +321,43 @@ keyboard events requires running inside the interactive user session. Installed
 as a service it would sit in session 0 and be unable to touch the desktop at
 all — a common way to get this wrong.
 
+### Adding another computer: one file, nothing to configure
+
+```bash
+python scripts/build.py --setup
+```
+
+This produces two things in `dist/`: the agent itself (`Pult.exe`, ~20 MB) and
+`Pult-Setup.exe` (~82 MB), which carries the agent, ffmpeg, cloudflared and the
+Telegram settings from the machine that built it. Copy that single file to the
+new computer and open it. It copies the agent into `%LOCALAPPDATA%\Pult`, drops
+the helper binaries beside it, writes a config with the tunnel enabled and
+Telegram already set, registers the logon task, starts the agent and opens the
+pairing QR. Nothing is typed and nothing is downloaded.
+
+The split matters. If the fat file *were* the installed agent, a one-file
+PyInstaller build would unpack ~82 MB into a temp directory on every boot. The
+installer exists once; what stays behind is the slim agent with its helpers
+sitting as plain files next to it.
+
+Each computer generates its **own key and id** — those are deliberately not
+copied, otherwise the phone could not tell the machines apart. The Telegram bot
+and the tunnel mode are copied, since those are what you would otherwise have
+to set up by hand.
+
+Two things to know:
+
+- with `--setup` the installer embeds your bot token, so treat that file as
+  private — build with `--no-settings` if it will leave your hands;
+- task registration goes through PowerShell's `Register-ScheduledTask`.
+  `schtasks.exe` is tried as a fallback, but on the machine this was developed
+  on it returned *Access is denied* while the PowerShell path worked, so the
+  order is not arbitrary.
+
+Running the slim `Pult.exe` directly also offers to install itself, so the
+installer is a convenience rather than a requirement. `Pult.exe --uninstall`
+removes the logon task.
+
 ## Why HTTPS with a self-signed certificate
 
 Browsers only expose video decoding (WebCodecs), service workers and wake-lock
