@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import html
 import io
+from urllib.parse import quote
 
 from ..config import Config
 
@@ -30,6 +31,16 @@ def qr_svg(data: str, scale: int = 8) -> str:
         dark="#0b0d10", light="#ffffff", xmldecl=False, svgns=True,
     )
     return buf.getvalue().decode("utf-8")
+
+
+def app_link(target: str) -> str:
+    """Pult ilovasi uchun havola.
+
+    Oddiy https havolasini kamera skanerlasa brauzer ochiladi. Ilova esa
+    o'z sxemasi bilan ochiladi, shuning uchun ikkita QR kerak - qaysi biri
+    kerakligini foydalanuvchi tanlaydi.
+    """
+    return "pult://add?u=" + quote(target, safe="")
 
 
 def render_pair_page(target: str, urls: list[str], cfg: Config, fingerprint: str) -> str:
@@ -73,16 +84,38 @@ def render_pair_page(target: str, urls: list[str], cfg: Config, fingerprint: str
   .fp {{ color: #6f7c8b; font-size: 11px; margin-top: 14px; }}
   details {{ margin-top: 14px; text-align: left; font-size: 13px; color: #8b97a6; }}
   ul {{ padding-left: 18px; }}
+  .tabs {{ display: flex; gap: 6px; justify-content: center; margin-top: 16px; }}
+  .tab {{
+    background: #1c222a; border: 1px solid #262d36; color: #b9c4d0;
+    padding: 7px 16px; border-radius: 999px; font-size: 13px; cursor: pointer;
+  }}
+  .tab.on {{ background: #4da3ff; border-color: #4da3ff; color: #04121f; }}
+  [hidden] {{ display: none !important; }}
 </style>
 </head><body>
 <div class="card">
   <h1>Telefonni ulash</h1>
   <div class="host">{html.escape(cfg.host_name)}</div>
 
-  <div class="qr">{qr_svg(target)}</div>
+  <div class="tabs">
+    <button class="tab on" data-for="qr-app">Pult ilovasi</button>
+    <button class="tab" data-for="qr-web">Brauzer</button>
+  </div>
+
+  <div class="qr" id="qr-app">{qr_svg(app_link(target))}</div>
+  <div class="qr" id="qr-web" hidden>{qr_svg(target)}</div>
+
   <div><code>{html.escape(target)}</code></div>
 
-  <ol>
+  <ol id="steps-app">
+    <li>Telefonga Pult ilovasi o&lsquo;rnatilgan bo&lsquo;lsin.</li>
+    <li>Kamera bilan QR kodni skanerlang &mdash; ilova o&lsquo;zi ochiladi.</li>
+    <li>Birinchi ulanishda sertifikat izi so&lsquo;raladi. U yuqoridagi iz bilan
+        bir xil bo&lsquo;lsa <b>&laquo;Ishonaman&raquo;</b> ni bosing &mdash; bu savol
+        boshqa berilmaydi.</li>
+  </ol>
+
+  <ol id="steps-web" hidden>
     <li>Telefon kamerasi bilan QR kodni skanerlang.</li>
     <li>Brauzer sertifikat haqida ogohlantiradi &mdash; bu kutilgan holat.
         <b>Qo&lsquo;shimcha &rarr; Baribir davom etish</b>.</li>
@@ -99,4 +132,17 @@ def render_pair_page(target: str, urls: list[str], cfg: Config, fingerprint: str
   {alt_block}
   {f'<div class="fp">Sertifikat izi: {html.escape(fingerprint)}</div>' if fingerprint else ''}
 </div>
+<script>
+  document.querySelectorAll(".tab").forEach(function (t) {{
+    t.onclick = function () {{
+      var app = t.dataset.for === "qr-app";
+      document.querySelectorAll(".tab").forEach(function (x) {{ x.classList.remove("on"); }});
+      t.classList.add("on");
+      document.getElementById("qr-app").hidden = !app;
+      document.getElementById("qr-web").hidden = app;
+      document.getElementById("steps-app").hidden = !app;
+      document.getElementById("steps-web").hidden = app;
+    }};
+  }});
+</script>
 </body></html>"""

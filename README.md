@@ -200,6 +200,35 @@ reaches the internet, you get a message with the link.
 python -m pult --test-notify    # send one now to check
 ```
 
+### Android app
+
+The phone app is a thin shell around the same web interface, so the two never
+drift apart. It exists for one reason that matters and a few that are nice:
+
+**It remembers the certificate.** A browser warns about the self-signed
+certificate on every visit and refuses to install the page as a real app. The
+app asks once, shows you the fingerprint to compare against the one the agent
+prints, and pins it — from then on it connects silently and accepts *only* that
+certificate, which is stricter than clicking through a browser warning.
+
+It also holds a list of computers, opens straight into the last one when there
+is only a single entry, runs fullscreen without browser chrome, keeps the screen
+awake, and opens in landscape.
+
+```bash
+powershell -ExecutionPolicy Bypass -File scriptsndroid_toolchain.ps1   # once, ~700 MB
+powershell -ExecutionPolicy Bypass -File scriptsuild_apk.ps1
+```
+
+The toolchain script installs a JDK and the Android SDK into a single folder
+(`E:\dev-tools` by default) without touching `PATH`, the registry, or requiring
+administrator rights — delete the folder and nothing remains. The build produces
+`android/app/build/outputs/apk/debug/Pult-debug-1.0.apk`.
+
+To pair, open **Telefonni ulash** from the tray icon and scan the QR labelled
+*Pult ilovasi* — it opens the app directly and adds the computer. The *Brauzer*
+tab has the plain link for phones without the app.
+
 ### Start automatically at login
 
 ```powershell

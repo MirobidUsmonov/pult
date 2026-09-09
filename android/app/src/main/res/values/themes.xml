@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Qorong'i mavzu: ilova ham veb-qismi ham qora fonda -->
+    <style name="PultTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0B0D10</item>
+        <item name="android:statusBarColor">#0B0D10</item>
+        <item name="android:navigationBarColor">#0B0D10</item>
+        <item name="android:colorAccent">#4DA3FF</item>
+    </style>
+</resources>
