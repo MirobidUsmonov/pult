@@ -76,6 +76,7 @@ class HostServer:
         self.app.router.add_get("/api/info", self.info_handler)
         self.app.router.add_get("/cert.pem", self.cert_handler)
         self.app.router.add_get("/pair", self.pair_handler)
+        self.app.router.add_post("/api/pair/send", self.pair_send_handler)
         self.app.router.add_get("/", self.index_handler)
         if root.is_dir():
             self.app.router.add_static("/", root, show_index=False)
@@ -107,6 +108,38 @@ class HostServer:
         target = f"{urls[0]}/#k={self.cfg.token}"
         html = render_pair_page(target, urls, self.cfg, tls.fingerprint(config_dir()))
         return web.Response(text=html, content_type="text/html")
+
+    async def pair_send_handler(self, request: web.Request) -> web.StreamResponse:
+        """Ulash havolasini Telegramga yuboradi.
+
+        Kamera bilan QR skanerlash har doim ham qulay emas: kod ekranda
+        kichik bo'lishi, kamera fokusga tushmasligi mumkin. Telegram
+        esa telefonda allaqachon ochiq - havola bir soniyada yetadi va
+        uni ilovaga "Ulashish" orqali berish kifoya.
+        """
+        if not _authorized(request, self.cfg.token):
+            return web.json_response({"ok": False, "msg": "kalit noto'g'ri"}, status=401)
+
+        t = self.cfg.telegram
+        if not (t.bot_token and t.chat_id):
+            return web.json_response({"ok": False, "msg": "Telegram sozlanmagan"})
+
+        from .. import notify
+
+        base = self.cfg.public_url.rstrip("/") if self.cfg.public_url else \
+            local_addresses(self.cfg.port, self.scheme)[0]
+        link = f"{base}/#k={self.cfg.token}&h={self.cfg.host_id}"
+        text = (
+            f"🔗 <b>{self.cfg.host_name}</b> — ulash havolasi\n\n"
+            f"<code>{link}</code>\n\n"
+            "Havolani bosib turing → <b>Ulashish</b> → <b>Pult</b>."
+        )
+        try:
+            await notify.Telegram(t.bot_token, t.chat_id).send(text)
+            return web.json_response({"ok": True})
+        except Exception as exc:
+            log.warning("ulash havolasi yuborilmadi: %s", exc)
+            return web.json_response({"ok": False, "msg": str(exc)[:120]})
 
     async def cert_handler(self, request: web.Request) -> web.StreamResponse:
         """Sertifikatni yuklab olish.

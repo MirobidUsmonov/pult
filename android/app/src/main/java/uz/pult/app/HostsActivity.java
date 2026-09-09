@@ -124,11 +124,17 @@ public class HostsActivity extends Activity {
         list.removeAllViews();
         List<Hosts.Host> all = hosts.all();
         if (all.isEmpty()) {
+            // Bo'sh ro'yxat - ilovadagi birinchi ko'rinish. Shunchaki
+            // "bo'sh" deb yozish o'rniga nima qilish kerakligini aytamiz.
             TextView empty = new TextView(this);
-            empty.setText("Hali kompyuter qo‘shilmagan");
+            empty.setText("Hali kompyuter qo‘shilmagan.\n\n"
+                    + "Kompyuterda soat yonidagi Pult belgisini bosing "
+                    + "va «Telefonni ulash» ni tanlang — QR kod chiqadi.\n\n"
+                    + "Keyin pastdagi tugmani bosing.");
             empty.setTextColor(MUTED);
             empty.setGravity(Gravity.CENTER);
-            empty.setPadding(0, dp(50), 0, 0);
+            empty.setLineSpacing(0, 1.25f);
+            empty.setPadding(dp(10), dp(46), dp(10), 0);
             list.addView(empty);
             return;
         }
@@ -359,7 +365,15 @@ public class HostsActivity extends Activity {
         }
 
         new AlertDialog.Builder(this)
-                .setTitle("Havolani qo‘ying")
+                .setTitle("Kompyuter qo‘shish")
+                // Havolani qayerdan olishni aytmaslik eng ko'p adashtirgan
+                // joy edi: oyna ochiladi-yu, nima yozishni bilib bo'lmaydi
+                .setMessage("Kompyuterda soat yonidagi Pult belgisini bosing → "
+                        + "«Telefonni ulash».\n\n"
+                        + "• QR kodni kamera bilan skanerlang, yoki\n"
+                        + "• «Telegramga yuborish» ni bosing va kelgan havolani "
+                        + "bosib turib «Ulashish → Pult» qiling, yoki\n"
+                        + "• havolani nusxalab shu yerga qo‘ying.")
                 .setView(input)
                 .setPositiveButton("Qo‘shish", (d, w) -> addFromLink(input.getText().toString()))
                 .setNegativeButton("Bekor", null)
