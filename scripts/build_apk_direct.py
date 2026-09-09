@@ -84,6 +84,16 @@ class Tools:
         return self.bt / f"apksigner{self.bat}"
 
 
+def say(text: str) -> None:
+    """Konsolga chiqaradi. Konsol kodlashiga sig'magan belgilar
+    skriptni yiqitmasin - aks holda asl xato ko'rinmay qoladi."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        enc = sys.stdout.encoding or "ascii"
+        print(text.encode(enc, "replace").decode(enc, "replace"))
+
+
 def run(args: list, env: dict | None = None, step: str = "") -> None:
     printable = " ".join(str(a) for a in args)
     result = subprocess.run(
@@ -103,7 +113,7 @@ def run(args: list, env: dict | None = None, step: str = "") -> None:
     # "deprecated" shovqini ko'p - faqat muhimlarini ko'rsatamiz
     for line in (result.stderr or "").splitlines():
         if "error" in line.lower():
-            print("  " + line)
+            say("  " + line)
 
 
 def prepare_manifest(build_dir: Path) -> Path:

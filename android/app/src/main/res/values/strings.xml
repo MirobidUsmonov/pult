@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Pult</string>
+
+    <!-- Android resurslarida apostrof qochirilishi shart, aks holda
+         fayl umuman kompilyatsiya qilinmaydi. -->
+    <string name="accessibility_description">Kompyuterdan kelgan bosish va surishlarni telefonda bajaradi. Bu xizmatsiz kompyuter telefonni boshqara olmaydi — Android boshqa yo\'l bermaydi.</string>
 </resources>

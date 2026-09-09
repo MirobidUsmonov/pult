@@ -229,6 +229,28 @@ To pair, open **Telefonni ulash** from the tray icon and scan the QR labelled
 *Pult ilovasi* — it opens the app directly and adds the computer. The *Brauzer*
 tab has the plain link for phones without the app.
 
+### The other direction: controlling the phone from the PC
+
+The phone can also register itself as a *source* — it streams its own screen to
+the agent and executes input coming back. Several phones can be connected at
+once; the browser picks one from a list. No separate system was needed for
+this: the protocol was transport- and role-agnostic from the start, so a phone
+simply connects with a different role and the same messages flow the other way.
+
+The phone's screen is captured with MediaProjection and encoded by the phone's
+own hardware H.264 encoder, so the CPU is barely touched. The frames arrive in
+the same shape as the PC's own stream, which is why the desktop side needed no
+new code for them.
+
+**Input requires a permission you must grant by hand.** Android does not let an
+ordinary app tap on other apps — the only sanctioned path is an accessibility
+service, which the user enables in system settings. There is no way around it,
+by design. Screen sharing alone works without it, so you can watch the phone
+without granting anything.
+
+Tap ⇧ on a computer's card in the app to start sharing; a notification stays up
+while it runs and stops it with one tap.
+
 ### Start automatically at login
 
 ```powershell

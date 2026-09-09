@@ -5,6 +5,8 @@ import android.app.AlertDialog;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.media.projection.MediaProjectionManager;
+import android.provider.Settings;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
@@ -38,8 +40,11 @@ public class HostsActivity extends Activity {
     private static final int MUTED = 0xFF8B97A6;
     private static final int ACCENT = 0xFF4DA3FF;
 
+    private static final int REQ_PROJECTION = 41;
+
     private Hosts hosts;
     private LinearLayout list;
+    private Hosts.Host pendingShare;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -105,8 +110,8 @@ public class HostsActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView hint = new TextView(this);
-        hint.setText("Kompyuterdagi Pult treyida «Telefonni ulash» ni oching va "
-                + "havolani shu yerga qo‘ying.");
+        hint.setText("Kartaga bosilsa kompyuter ekrani ochiladi. "
+                + "⇧ tugmasi esa aksincha — telefon ekranini kompyuterga beradi.");
         hint.setTextColor(MUTED);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         hint.setPadding(dp(4), dp(14), dp(4), 0);
@@ -133,10 +138,13 @@ public class HostsActivity extends Activity {
     }
 
     private View card(Hosts.Host h) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setBackground(rounded(PANEL, LINE));
+        row.setPadding(dp(16), dp(14), dp(10), dp(14));
+
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setBackground(rounded(PANEL, LINE));
-        box.setPadding(dp(16), dp(14), dp(16), dp(14));
 
         TextView name = new TextView(this);
         name.setText(h.display());
@@ -159,12 +167,117 @@ public class HostsActivity extends Activity {
             confirmRemove(h);
             return true;
         });
+        row.addView(box, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        // Teskari yo'nalish: telefon ekranini kompyuterga berish
+        TextView share = new TextView(this);
+        boolean on = ScreenService.isRunning();
+        share.setText(on ? "◼" : "⇧");
+        share.setTextColor(on ? 0xFF3DDC84 : ACCENT);
+        share.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        share.setGravity(Gravity.CENTER);
+        share.setPadding(dp(14), dp(6), dp(14), dp(6));
+        share.setOnClickListener(v -> {
+            if (ScreenService.isRunning()) stopShare();
+            else startShare(h);
+        });
+        row.addView(share);
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.bottomMargin = dp(10);
-        box.setLayoutParams(lp);
-        return box;
+        row.setLayoutParams(lp);
+        return row;
+    }
+
+    // -------------------------------------------------- ekranni ulashish
+
+    private void startShare(Hosts.Host h) {
+        if (h.pin.isEmpty()) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Avval bir marta ulaning")
+                    .setMessage("Ekranni uzatish uchun sertifikat izi kerak. "
+                            + "Kompyuterni bir marta oching — iz saqlanadi, "
+                            + "keyin bu ishlaydi.")
+                    .setPositiveButton("Ochish", (d, w) -> open(h))
+                    .setNegativeButton("Bekor", null)
+                    .show();
+            return;
+        }
+        if (InputService.get() == null) {
+            askForAccessibility(h);
+            return;
+        }
+        requestProjection(h);
+    }
+
+    /**
+     * Ekranni ko'rsatish uchun ruxsat so'raydi.
+     *
+     * Android buni har safar so'raydi va uni saqlab qo'yishning iloji
+     * yo'q - bu ataylab qo'yilgan himoya, chetlab o'tib bo'lmaydi.
+     */
+    private void requestProjection(Hosts.Host h) {
+        pendingShare = h;
+        MediaProjectionManager mpm =
+                (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+        startActivityForResult(mpm.createScreenCaptureIntent(), REQ_PROJECTION);
+    }
+
+    /** Boshqarish xizmati yoqilmagan - sozlamalarga yo'naltiramiz. */
+    private void askForAccessibility(Hosts.Host h) {
+        new AlertDialog.Builder(this)
+                .setTitle("Boshqarish uchun ruxsat kerak")
+                .setMessage("Kompyuter telefonga bosishi uchun Android "
+                        + "sozlamalarida «Maxsus imkoniyatlar» bo‘limidan "
+                        + "Pult xizmatini yoqing.\n\n"
+                        + "Bu Android himoyasi: hech bir ilova boshqa "
+                        + "ilovalarga o‘zicha bosa olmaydi.\n\n"
+                        + "Faqat ekranni ko‘rsatmoqchi bo‘lsangiz, "
+                        + "yoqmasdan ham davom etish mumkin.")
+                .setPositiveButton("Sozlamalarni ochish", (d, w) -> {
+                    try {
+                        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                    } catch (Exception e) {
+                        Toast.makeText(this, "Sozlamalarni ochib bo‘lmadi",
+                                Toast.LENGTH_LONG).show();
+                    }
+                })
+                .setNeutralButton("Faqat ko‘rsatish", (d, w) -> requestProjection(h))
+                .setNegativeButton("Bekor", null)
+                .show();
+    }
+
+    private void stopShare() {
+        Intent i = new Intent(this, ScreenService.class).setAction(ScreenService.ACTION_STOP);
+        startService(i);
+        Toast.makeText(this, "Ekran uzatish to‘xtatildi", Toast.LENGTH_SHORT).show();
+        list.postDelayed(this::refresh, 400);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_PROJECTION) return;
+        if (resultCode != RESULT_OK || data == null || pendingShare == null) {
+            Toast.makeText(this, "Ekran olishga ruxsat berilmadi", Toast.LENGTH_LONG).show();
+            return;
+        }
+        Hosts.Host h = pendingShare;
+        pendingShare = null;
+
+        Intent svc = new Intent(this, ScreenService.class);
+        svc.putExtra(ScreenService.EXTRA_URL, h.url);
+        svc.putExtra(ScreenService.EXTRA_TOKEN, h.token);
+        svc.putExtra(ScreenService.EXTRA_PIN, h.pin);
+        svc.putExtra(ScreenService.EXTRA_NAME, android.os.Build.MODEL);
+        svc.putExtra(ScreenService.EXTRA_RESULT_CODE, resultCode);
+        svc.putExtra(ScreenService.EXTRA_RESULT_DATA, data);
+        startForegroundService(svc);
+
+        Toast.makeText(this, "Ekran kompyuterga uzatilmoqda", Toast.LENGTH_LONG).show();
+        list.postDelayed(this::refresh, 600);
     }
 
     // ------------------------------------------------------------ amallar
