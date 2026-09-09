@@ -269,6 +269,36 @@ def build(tools: Tools, out_dir: Path) -> Path:
     return final
 
 
+BIDO_PYTHON = Path(
+    r"C:\Users\Windows 11\mcp\claude-bot-run\.venv-telegram\Scripts\python.exe"
+)
+
+
+def send_to_saved(apk: Path) -> bool:
+    """APK'ni Telegram'dagi Saqlangan xabarlarga yuboradi.
+
+    BIDO yordamchisining akkaunt sessiyasidan foydalanadi - oddiy bot
+    Saqlangan xabarlarga yoza olmaydi, chunki u foydalanuvchining o'z
+    chati.
+
+    Sessiya band yoki eskirgan bo'lsa jimgina o'tkazib yuboriladi:
+    yuborilmagani yig'ishni buzmasligi kerak.
+    """
+    sender = ROOT / "scripts" / "send_to_saved.py"
+    if not BIDO_PYTHON.exists() or not sender.exists():
+        return False
+    result = subprocess.run(
+        [str(BIDO_PYTHON), str(sender), str(apk),
+         f"Pult {VERSION_NAME} — {apk.stat().st_size / 1024:.0f} KB"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        creationflags=NO_WINDOW,
+    )
+    for line in (result.stdout or "").splitlines():
+        if line.strip():
+            say("  " + line.strip())
+    return result.returncode == 0
+
+
 def send_to_telegram(apk: Path) -> None:
     """Yig'ilgan APK'ni Telegram'ga yuboradi.
 
@@ -373,7 +403,10 @@ def main() -> int:
             say(f"  Ish stoliga nusxalanmadi ({e})")
 
     if args.telegram:
-        send_to_telegram(apk)
+        # Avval Saqlangan xabarlarga urinamiz (akkaunt sessiyasi orqali),
+        # bo'lmasa bot chatiga tushadi.
+        if not send_to_saved(apk):
+            send_to_telegram(apk)
     return 0
 
 

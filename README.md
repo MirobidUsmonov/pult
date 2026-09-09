@@ -251,6 +251,23 @@ without granting anything.
 Tap ⇧ on a computer's card in the app to start sharing; a notification stays up
 while it runs and stops it with one tap.
 
+### Getting the built APK to your phone
+
+```bash
+python scripts/build_apk_direct.py --desktop --telegram
+```
+
+`--desktop` drops a copy on the desktop. `--telegram` tries two routes in
+order: your own Telegram account's *Saved Messages* (via a Telethon session, if
+one is configured), falling back to a bot chat. A bot cannot write to Saved
+Messages — that chat belongs to your account, and bots have no access to it —
+so the account route is the only one that lands there.
+
+If it uses an account session, note the hazard the sender guards against: two
+clients sharing one Telegram auth key make Telegram raise
+`AuthKeyDuplicatedError` and revoke *both*. The script checks whether the
+session file is locked and refuses to connect rather than risk it.
+
 ### Start automatically at login
 
 ```powershell
