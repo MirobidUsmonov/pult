@@ -278,6 +278,9 @@ function setPlaceholder(text, button) {
   $("phText").textContent = text;
   $("phBtn").hidden = !button;
   if (button) $("phBtn").textContent = button;
+  // QR faqat "telefon kutilmoqda" holatida ko'rinadi - boshqa
+  // xabarlar (ulanmoqda, uzildi) uni ko'rsatmasin
+  $("pairBox").hidden = true;
 }
 
 function setDot(cls, label) {
@@ -1416,12 +1419,62 @@ function updateWaiting() {
   if (wantView !== "phone" || autoPicked) return;
   if (sources.some((s) => s.kind !== "pc")) return;
   setPlaceholder(
-    "Telefon hali ulanmagan.\n\n" +
-    "Telefonda Pult ilovasini oching, kompyuterni tanlang va " +
-    "⇧ tugmasini bosing — ekran shu yerda chiqadi.",
+    "Telefon hali ulanmagan.\n" +
+    "Ilova bo‘lsa: kompyuterni tanlab «Ekranimni uzatish» ni bosing.\n" +
+    "Bo‘lmasa: QR kodni skanerlang — ilova o‘zi ochiladi.",
     null
   );
+  showPairBox();
 }
+
+/* Ulash uchun QR - asosiy oynaning o'zida. Shunda "telefonni qayerda
+ * ko'raman" va "qanday ulayman" bitta joyda javob topadi; ilgari
+ * QR alohida sahifada edi va uni izlab yurish kerak bo'lardi. */
+let pairLoaded = false;
+async function showPairBox() {
+  const box = $("pairBox");
+  box.hidden = false;
+  if (pairLoaded) return;
+  try {
+    const r = await fetch(`/api/pair?k=${encodeURIComponent(link.token)}`,
+                          { cache: "no-store" });
+    const d = await r.json();
+    $("pairQr").innerHTML = d.svg || "";
+    $("pairLink").textContent = d.link || "";
+    $("pairSend").hidden = !d.telegram;
+    pairLoaded = true;
+  } catch (e) {
+    $("pairQr").textContent = "QR yuklanmadi";
+  }
+}
+
+function pairSay(text, bad) {
+  const el = $("pairSaid");
+  el.textContent = text;
+  el.className = "pair-said" + (bad ? " bad" : "");
+}
+
+$("pairCopy").addEventListener("click", () => {
+  navigator.clipboard.writeText($("pairLink").textContent).then(
+    () => pairSay("Nusxalandi"),
+    () => pairSay("Nusxalab bo‘lmadi", true)
+  );
+});
+
+$("pairSend").addEventListener("click", async () => {
+  const b = $("pairSend");
+  b.disabled = true;
+  pairSay("Yuborilmoqda…");
+  try {
+    const r = await fetch(`/api/pair/send?k=${encodeURIComponent(link.token)}`,
+                          { method: "POST" });
+    const d = await r.json();
+    pairSay(d.ok ? "Telegramga yuborildi" : (d.msg || "Yuborilmadi"), !d.ok);
+  } catch (e) {
+    pairSay("Yuborilmadi", true);
+  }
+  b.disabled = false;
+});
 
 /* view=phone bilan ochilganda ulangan telefonni o'zi tanlaydi.
  * Telefon keyinroq ulansa ham ishlaydi: "sources" xabari kelganda

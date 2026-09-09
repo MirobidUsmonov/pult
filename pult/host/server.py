@@ -77,6 +77,7 @@ class HostServer:
         self.app.router.add_get("/cert.pem", self.cert_handler)
         self.app.router.add_get("/pair", self.pair_handler)
         self.app.router.add_post("/api/pair/send", self.pair_send_handler)
+        self.app.router.add_get("/api/pair", self.pair_json_handler)
         self.app.router.add_get("/", self.index_handler)
         if root.is_dir():
             self.app.router.add_static("/", root, show_index=False)
@@ -108,6 +109,30 @@ class HostServer:
         target = f"{urls[0]}/#k={self.cfg.token}"
         html = render_pair_page(target, urls, self.cfg, tls.fingerprint(config_dir()))
         return web.Response(text=html, content_type="text/html")
+
+    async def pair_json_handler(self, request: web.Request) -> web.StreamResponse:
+        """Ulash uchun QR va havola - asosiy oynaning ichida ko'rsatish uchun.
+
+        Telefon hali ulanmagan bo'lsa asosiy oyna bo'sh turmasin: QR
+        kod o'sha yerning o'zida chiqadi. Shunda "telefonni qayerda
+        ko'raman" va "qanday ulayman" degan ikkita savol bitta joyda
+        javob topadi.
+        """
+        if not _authorized(request, self.cfg.token):
+            return web.json_response({"error": "kalit noto'g'ri"}, status=401)
+
+        from .pairing import app_link, qr_svg
+
+        urls = local_addresses(self.cfg.port, self.scheme)
+        if self.cfg.public_url:
+            urls = [self.cfg.public_url.rstrip("/")] + urls
+        target = f"{urls[0]}/#k={self.cfg.token}&h={self.cfg.host_id}"
+        t = self.cfg.telegram
+        return web.json_response({
+            "svg": qr_svg(app_link(target)),
+            "link": target,
+            "telegram": bool(t.bot_token and t.chat_id),
+        })
 
     async def pair_send_handler(self, request: web.Request) -> web.StreamResponse:
         """Ulash havolasini Telegramga yuboradi.

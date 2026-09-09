@@ -167,8 +167,8 @@ public class HostsActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView hint = new TextView(this);
-        hint.setText("Kartaga bosilsa kompyuter ekrani ochiladi. "
-                + "⇧ tugmasi esa aksincha — telefon ekranini kompyuterga beradi.");
+        hint.setText("«Boshqarish» — kompyuter ekrani telefonda. "
+                + "«Ekranimni uzatish» — telefon ekrani kompyuterda.");
         hint.setTextColor(MUTED);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         hint.setPadding(dp(4), dp(14), dp(4), 0);
@@ -195,26 +195,62 @@ public class HostsActivity extends Activity {
             list.addView(empty);
             return;
         }
+        // Uzatish yoqilgan bo'lsa buni ro'yxat tepasida aniq ko'rsatamiz:
+        // ilgari faqat kartadagi kichik belgi o'zgarardi va uzatish
+        // ketayotganini payqash qiyin edi.
+        if (ScreenService.isRunning()) {
+            LinearLayout banner = new LinearLayout(this);
+            banner.setOrientation(LinearLayout.HORIZONTAL);
+            banner.setGravity(Gravity.CENTER_VERTICAL);
+            banner.setBackground(rounded(0xFF10261A, 0xFF3DDC84));
+            banner.setPadding(dp(14), dp(12), dp(10), dp(12));
+
+            TextView text = new TextView(this);
+            text.setText("●  Ekran kompyuterga uzatilmoqda");
+            text.setTextColor(0xFF3DDC84);
+            text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            text.setTypeface(Typeface.DEFAULT_BOLD);
+            banner.addView(text, new LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+            TextView stop = button("To‘xtatish", 0xFF3DDC84, 0xFF04121F);
+            stop.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+            stop.setPadding(dp(14), dp(8), dp(14), dp(8));
+            stop.setOnClickListener(v -> stopShare());
+            banner.addView(stop);
+
+            LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            blp.bottomMargin = dp(12);
+            banner.setLayoutParams(blp);
+            list.addView(banner);
+        }
         for (Hosts.Host h : all) {
             list.addView(card(h));
         }
     }
 
+    /**
+     * Bitta kompyuter kartasi.
+     *
+     * Ikkita yo'nalish ikkita ochiq yozilgan tugma bilan: "Boshqarish"
+     * (kompyuter ekrani telefonda) va "Ekranimni uzatish" (telefon
+     * ekrani kompyuterda). Ilgari ikkinchisi kichik ⇧ belgisi edi va
+     * u nima qilishini bilib bo'lmasdi - belgi bosilgan-bosilmagani
+     * ham sezilmasdi.
+     */
     private View card(Hosts.Host h) {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setBackground(rounded(PANEL, LINE));
-        row.setPadding(dp(16), dp(14), dp(10), dp(14));
-
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL);
+        card.setBackground(rounded(PANEL, LINE));
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
 
         TextView name = new TextView(this);
         name.setText(h.display());
         name.setTextColor(TEXT);
         name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
         name.setTypeface(Typeface.DEFAULT_BOLD);
-        box.addView(name);
+        card.addView(name);
 
         TextView url = new TextView(this);
         String note = h.url;
@@ -230,36 +266,49 @@ public class HostsActivity extends Activity {
         url.setText(note);
         url.setTextColor(MUTED);
         url.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        url.setPadding(0, dp(3), 0, 0);
-        box.addView(url);
+        url.setPadding(0, dp(3), 0, dp(12));
+        card.addView(url);
 
-        box.setOnClickListener(v -> open(h));
-        box.setOnLongClickListener(v -> {
-            confirmRemove(h);
-            return true;
-        });
-        row.addView(box, new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        // Tugmalar qatori
+        LinearLayout acts = new LinearLayout(this);
+        acts.setOrientation(LinearLayout.HORIZONTAL);
 
-        // Teskari yo'nalish: telefon ekranini kompyuterga berish
-        TextView share = new TextView(this);
+        TextView control = button("Boshqarish", ACCENT, 0xFF04121F);
+        control.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        control.setPadding(dp(12), dp(12), dp(12), dp(12));
+        control.setOnClickListener(v -> open(h));
+        LinearLayout.LayoutParams l1 = new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        l1.rightMargin = dp(8);
+        acts.addView(control, l1);
+
         boolean on = ScreenService.isRunning();
-        share.setText(on ? "◼" : "⇧");
-        share.setTextColor(on ? 0xFF3DDC84 : ACCENT);
-        share.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
-        share.setGravity(Gravity.CENTER);
-        share.setPadding(dp(14), dp(6), dp(14), dp(6));
+        TextView share = on
+                ? button("◼  To‘xtatish", 0xFF10261A, 0xFF3DDC84)
+                : button("Ekranimni uzatish", PANEL, TEXT);
+        share.setBackground(rounded(on ? 0xFF10261A : PANEL, on ? 0xFF3DDC84 : 0xFF2F3946));
+        share.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        share.setPadding(dp(12), dp(12), dp(12), dp(12));
         share.setOnClickListener(v -> {
             if (ScreenService.isRunning()) stopShare();
             else startShare(h);
         });
-        row.addView(share);
+        acts.addView(share, new LinearLayout.LayoutParams(0,
+                ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        card.addView(acts);
+
+        // Uzun bosish - ro'yxatdan o'chirish
+        card.setOnLongClickListener(v -> {
+            confirmRemove(h);
+            return true;
+        });
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.bottomMargin = dp(10);
-        row.setLayoutParams(lp);
-        return row;
+        card.setLayoutParams(lp);
+        return card;
     }
 
     // -------------------------------------------------- ekranni ulashish

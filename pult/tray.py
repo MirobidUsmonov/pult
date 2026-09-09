@@ -140,8 +140,11 @@ class TrayApp:
         return pystray.Menu(
             pystray.MenuItem(self.cfg.host_name, None, enabled=False),
             pystray.Menu.SEPARATOR,
-            item("Telefonni ulash (QR)", self.open_pair, default=True),
-            item("Telefon ekranini ko'rish", self.open_viewer),
+            # Belgini bosganda ochiladigan asosiy oyna - telefon shu
+            # yerda ko'rinadi. Ilgari asosiy amal QR sahifasi edi va
+            # odam telefonni ko'radigan joyni topa olmasdi.
+            item("Pult oynasi", self.open_viewer, default=True),
+            item("Telefonni ulash (QR)", self.open_pair),
             item("Havolani nusxalash", self.copy_link),
             pystray.Menu.SEPARATOR,
             item("Loglar", lambda: _open_path(cfgmod.log_path())),

@@ -21,6 +21,17 @@
     <div class="ph-icon">🖥</div>
     <div class="ph-text" id="phText">Ulanmoqda…</div>
     <button class="ph-btn" id="phBtn" hidden>Boshlash</button>
+    <!-- Telefon hali ulanmagan bo'lsa QR shu yerning o'zida chiqadi:
+         ko'rish joyi va ulash joyi bitta oyna bo'lsin. -->
+    <div id="pairBox" hidden>
+      <div id="pairQr"></div>
+      <div id="pairLink"></div>
+      <div class="pair-acts">
+        <button class="pair-btn" id="pairCopy">Havolani nusxalash</button>
+        <button class="pair-btn" id="pairSend" hidden>Telegramga yuborish</button>
+      </div>
+      <div id="pairSaid" class="pair-said"></div>
+    </div>
   </div>
   <div id="cursorHint"></div>
   <!-- Ekran ko'rsatkichi. Videoning yon-veridagi qora chekkada turadi:
