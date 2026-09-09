@@ -150,16 +150,15 @@ public class HostsActivity extends Activity {
         TextView title = new TextView(this);
         title.setText("Pult");
         title.setTextColor(TEXT);
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 30);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 24);
         title.setTypeface(Typeface.DEFAULT_BOLD);
-        title.setLetterSpacing(-0.02f);
         root.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("Telefon ↔ kompyuter");
+        sub.setText("Kompyuterlar");
         sub.setTextColor(MUTED);
-        sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        sub.setPadding(0, dp(2), 0, dp(20));
+        sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        sub.setPadding(0, dp(2), 0, dp(18));
         root.addView(sub);
 
         ScrollView scroll = new ScrollView(this);
@@ -193,28 +192,14 @@ public class HostsActivity extends Activity {
         if (all.isEmpty()) {
             // Bo'sh ro'yxat - ilovadagi birinchi ko'rinish. Shunchaki
             // "bo'sh" deb yozish o'rniga nima qilish kerakligini aytamiz.
-            LinearLayout box = new LinearLayout(this);
-            box.setOrientation(LinearLayout.VERTICAL);
-            box.setGravity(Gravity.CENTER_HORIZONTAL);
-            box.setBackground(rounded(PANEL, LINE, 20));
-            box.setPadding(dp(24), dp(32), dp(24), dp(28));
-
-            TextView icon = new TextView(this);
-            icon.setText("🖥");
-            icon.setTextSize(TypedValue.COMPLEX_UNIT_SP, 40);
-            icon.setGravity(Gravity.CENTER);
-            icon.setBackground(rounded(PANEL2, LINE2, 36));
-            icon.setPadding(dp(18), dp(12), dp(18), dp(12));
-            box.addView(icon);
-
+            // Bo'sh holat: bezaksiz, faqat nima qilish kerakligi
             TextView head = new TextView(this);
             head.setText("Hali kompyuter yo‘q");
             head.setTextColor(TEXT);
-            head.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+            head.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
             head.setTypeface(Typeface.DEFAULT_BOLD);
-            head.setGravity(Gravity.CENTER);
-            head.setPadding(0, dp(18), 0, dp(8));
-            box.addView(head);
+            head.setPadding(dp(2), dp(28), dp(2), dp(6));
+            list.addView(head);
 
             TextView empty = new TextView(this);
             empty.setText("Kompyuterda soat yonidagi Pult belgisini bosing — "
@@ -222,15 +207,9 @@ public class HostsActivity extends Activity {
                     + "pastdagi tugma orqali qo‘shing.");
             empty.setTextColor(MUTED);
             empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-            empty.setGravity(Gravity.CENTER);
             empty.setLineSpacing(0, 1.3f);
-            box.addView(empty);
-
-            LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            elp.topMargin = dp(8);
-            box.setLayoutParams(elp);
-            list.addView(box);
+            empty.setPadding(dp(2), 0, dp(2), 0);
+            list.addView(empty);
             return;
         }
         // Uzatish yoqilgan bo'lsa buni ro'yxat tepasida aniq ko'rsatamiz:
@@ -240,8 +219,8 @@ public class HostsActivity extends Activity {
             LinearLayout banner = new LinearLayout(this);
             banner.setOrientation(LinearLayout.HORIZONTAL);
             banner.setGravity(Gravity.CENTER_VERTICAL);
-            banner.setBackground(rounded(OK_BG, OK, 16));
-            banner.setPadding(dp(16), dp(12), dp(10), dp(12));
+            banner.setBackground(rounded(PANEL, OK, 10));
+            banner.setPadding(dp(14), dp(10), dp(8), dp(10));
 
             TextView text = new TextView(this);
             text.setText("●  Ekran kompyuterga uzatilmoqda");
@@ -278,8 +257,8 @@ public class HostsActivity extends Activity {
     private View card(Hosts.Host h) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setBackground(rounded(PANEL, LINE, 18));
-        card.setPadding(dp(18), dp(16), dp(18), dp(16));
+        card.setBackground(rounded(PANEL, LINE, 10));
+        card.setPadding(dp(16), dp(14), dp(16), dp(14));
 
         // Nom qatori: holat nuqtasi + nom
         LinearLayout head = new LinearLayout(this);
@@ -296,7 +275,7 @@ public class HostsActivity extends Activity {
         TextView name = new TextView(this);
         name.setText(h.display());
         name.setTextColor(TEXT);
-        name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         name.setTypeface(Typeface.DEFAULT_BOLD);
         head.addView(name);
         card.addView(head);
@@ -323,21 +302,20 @@ public class HostsActivity extends Activity {
         acts.setOrientation(LinearLayout.HORIZONTAL);
 
         TextView control = button("Boshqarish", ACCENT, ACCENT_INK);
-        control.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f);
-        control.setPadding(dp(12), dp(13), dp(12), dp(13));
+        control.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        control.setPadding(dp(12), dp(11), dp(12), dp(11));
+        control.setBackground(rounded(ACCENT, ACCENT, 8));
         control.setOnClickListener(v -> open(h));
         LinearLayout.LayoutParams l1 = new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        l1.rightMargin = dp(10);
+        l1.rightMargin = dp(8);
         acts.addView(control, l1);
 
         boolean on = ScreenService.isRunning();
-        TextView share = on
-                ? button("◼  To‘xtatish", OK_BG, OK)
-                : button("Ekranimni uzatish", PANEL2, TEXT);
-        share.setBackground(rounded(on ? OK_BG : PANEL2, on ? OK : LINE2, 14));
-        share.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f);
-        share.setPadding(dp(12), dp(13), dp(12), dp(13));
+        TextView share = button(on ? "To‘xtatish" : "Ekranimni uzatish", PANEL2, on ? OK : TEXT);
+        share.setBackground(rounded(PANEL2, on ? OK : LINE2, 8));
+        share.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        share.setPadding(dp(12), dp(11), dp(12), dp(11));
         share.setOnClickListener(v -> {
             if (ScreenService.isRunning()) stopShare();
             else startShare(h);
@@ -672,13 +650,13 @@ public class HostsActivity extends Activity {
         b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         b.setTypeface(Typeface.DEFAULT_BOLD);
         b.setGravity(Gravity.CENTER);
-        b.setPadding(dp(16), dp(15), dp(16), dp(15));
-        b.setBackground(rounded(bg, bg, 14));
+        b.setPadding(dp(16), dp(14), dp(16), dp(14));
+        b.setBackground(rounded(bg, bg, 8));
         b.setClickable(true);
         return b;
     }
 
-    /** Kichik, to'liq yumaloq tugma (banner ichidagi kabi). */
+    /** Kichik tugma (banner ichidagi kabi). */
     private TextView pill(String text, int bg, int fg) {
         TextView b = new TextView(this);
         b.setText(text);
@@ -686,14 +664,14 @@ public class HostsActivity extends Activity {
         b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         b.setTypeface(Typeface.DEFAULT_BOLD);
         b.setGravity(Gravity.CENTER);
-        b.setPadding(dp(14), dp(8), dp(14), dp(8));
-        b.setBackground(rounded(bg, bg, 999));
+        b.setPadding(dp(12), dp(7), dp(12), dp(7));
+        b.setBackground(rounded(bg, bg, 6));
         b.setClickable(true);
         return b;
     }
 
     private GradientDrawable rounded(int fill, int stroke) {
-        return rounded(fill, stroke, 14);
+        return rounded(fill, stroke, 10);
     }
 
     private GradientDrawable rounded(int fill, int stroke, int radiusDp) {

@@ -18,7 +18,7 @@
 <div id="stage">
   <canvas id="screen" width="16" height="9"></canvas>
   <div id="placeholder">
-    <div class="ph-icon">🖥</div>
+    <div class="ph-icon"><svg class="ic" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
     <div class="ph-text" id="phText">Ulanmoqda…</div>
     <button class="ph-btn" id="phBtn" hidden>Boshlash</button>
     <!-- Telefon hali ulanmagan bo'lsa QR shu yerning o'zida chiqadi:
@@ -49,18 +49,20 @@
        ko'rinadi, shuning uchun odatiy holatda qator to'lib ketmaydi. -->
   <button id="btnSource" class="chip" hidden title="Manbani almashtirish"></button>
   <button id="btnZoom" class="chip" hidden>1×</button>
-  <button id="btnRotate" class="icon" aria-label="Burish" title="Burish">⟲</button>
-  <button id="btnFull" class="icon" aria-label="To‘liq ekran" title="To‘liq ekran">⛶</button>
-  <button id="btnSettings" class="icon" aria-label="Sozlamalar">⚙</button>
+  <!-- Belgilar chiziqli SVG: rang matndan olinadi, emoji kabi har
+       qurilmada boshqacha ko'rinmaydi. -->
+  <button id="btnRotate" class="icon" aria-label="Burish" title="Burish"><svg class="ic" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></button>
+  <button id="btnFull" class="icon" aria-label="To‘liq ekran" title="To‘liq ekran"><svg class="ic" viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></button>
+  <button id="btnSettings" class="icon" aria-label="Sozlamalar" title="Sozlamalar"><svg class="ic" viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></button>
 </header>
 
 <footer id="toolbar">
-  <button id="btnMode"  class="tool" title="Boshqaruv usuli"><span>🖱</span><i>trackpad</i></button>
+  <button id="btnMode"  class="tool" title="Boshqaruv usuli"><span></span><i>trackpad</i></button>
   <!-- O'rta qism ekranlar soniga qarab quriladi: bir nechta ekran
        bo'lsa - ekran tugmalari, bitta bo'lsa - sichqoncha tugmalari. -->
   <div id="toolMid"></div>
   <button id="btnDouble" class="tool" title="Ikki marta bosish"><span>2×</span><i>ikki</i></button>
-  <button id="btnKeys"  class="tool" title="Klaviatura"><span>⌨</span><i>klav</i></button>
+  <button id="btnKeys"  class="tool" title="Klaviatura"><span><svg class="ic" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg></span><i>klaviatura</i></button>
 </footer>
 
 <!-- Maxsus klavishlar. Telefon klaviaturasi bu tugmalarni bermaydi,

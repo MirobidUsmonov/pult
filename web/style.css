@@ -1,43 +1,41 @@
 /*
  * Pult - ko'rinish.
  *
- * Dizayn tizimi: qatlamli qorong'i yuzalar (s0 < s1 < s2 < s3 -
- * yuqoriroq qatlam ochroq), yumshoq chegaralar, bitta urg'u rangi.
- * O'lchovlar 4 px panjarasida, burchaklar 12/16/20 px. Hamma rang va
- * o'lcham shu yerdagi o'zgaruvchilardan olinadi - bitta joyda
- * o'zgartirsa hamma joyda o'zgaradi.
+ * Ish asbobi uchun dizayn: tinch, yassi, aniq. Bezak yo'q - blur,
+ * gradient, yorug'lik, soya ishlatilmaydi. Ierarxiya effekt bilan
+ * emas, o'lcham, og'irlik va joy bilan quriladi. Yuzalar uch qatlam
+ * (s0 < s1 < s2, yuqorisi ozgina ochroq), chegara bitta va ingichka,
+ * urg'u rangi bitta va qattiq. Burchaklar 6/8/12 px.
  *
  * Bitta sahifa ikki joyda ochiladi: telefonda (barmoq) va kompyuter
  * oynasida (sichqoncha). Farqlar oxiridagi @media bo'limida.
  */
 
 :root {
-  --s0: #0a0c10;
-  --s1: #11151b;
-  --s2: #181d25;
-  --s3: #202731;
-  --line: rgba(255, 255, 255, .07);
-  --line-2: rgba(255, 255, 255, .12);
-  --text: #eef2f7;
-  --muted: #93a0b1;
-  --dim: #5f6b7a;
-  --accent: #5aa9ff;
-  --accent-2: #3d8ef0;
-  --accent-ink: #061626;
-  --ok: #34d399;
-  --warn: #fbbf24;
-  --bad: #f87171;
-  --shadow: 0 10px 30px rgba(0, 0, 0, .45), 0 1px 0 rgba(255, 255, 255, .04) inset;
-  --glow: 0 0 0 1px rgba(90, 169, 255, .35), 0 6px 20px rgba(90, 169, 255, .25);
-  --r-sm: 10px;
-  --r: 14px;
-  --r-lg: 20px;
-  --bar: 48px;
-  --tool: 66px;
-  --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+  --s0: #0b0d11;
+  --s1: #12151a;
+  --s2: #191d23;
+  --s3: #21262d;
+  --line: rgba(255, 255, 255, .08);
+  --text: #e6e9ee;
+  --muted: #8b93a1;
+  --dim: #596273;
+  --accent: #4c9aff;
+  --accent-hi: #63a8ff;
+  --ink: #08121f;
+  --ok: #3fcf8e;
+  --warn: #e8b74a;
+  --bad: #f06c6c;
+  --r-sm: 6px;
+  --r: 8px;
+  --r-lg: 12px;
+  --bar: 46px;
+  --tool: 64px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", system-ui, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
 }
 
-/* Eski nomlar - JS va boshqa joylar ishlatadi */
+/* Eski nomlar - boshqa joylar ishlatadi */
 :root { --bg: var(--s0); --panel: var(--s1); --panel-2: var(--s2); }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -58,8 +56,11 @@ html, body {
 button { font-family: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline-offset: 1px;
 }
+
+/* Chiziqli belgilar: rang matndan olinadi */
+svg.ic { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; display: block; }
 
 /* ---------- yuqori qator ---------- */
 
@@ -67,64 +68,60 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   position: fixed;
   top: 0; left: 0; right: 0;
   height: calc(var(--bar) + env(safe-area-inset-top));
-  padding: env(safe-area-inset-top) 10px 0 14px;
+  padding: env(safe-area-inset-top) 8px 0 14px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  background: rgba(10, 12, 16, .72);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  gap: 6px;
+  background: var(--s1);
   border-bottom: 1px solid var(--line);
   z-index: 20;
   font-size: 13px;
 }
 
 #bar .spacer { flex: 1; }
-#hostName { font-weight: 600; letter-spacing: .1px; }
+#hostName { font-weight: 600; }
 .muted { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 .dot {
-  width: 8px; height: 8px; border-radius: 50%;
+  width: 7px; height: 7px; border-radius: 50%;
   background: var(--dim);
   flex: none;
-  transition: background .25s, box-shadow .25s;
+  margin-right: 2px;
+  transition: background .2s;
 }
-.dot.on   { background: var(--ok);   box-shadow: 0 0 0 3px rgba(52, 211, 153, .18); }
-.dot.warn { background: var(--warn); box-shadow: 0 0 0 3px rgba(251, 191, 36, .18); }
-.dot.off  { background: var(--bad);  box-shadow: 0 0 0 3px rgba(248, 113, 113, .18); }
+.dot.on   { background: var(--ok); }
+.dot.warn { background: var(--warn); }
+.dot.off  { background: var(--bad); }
 
 .icon {
   background: none; border: 0; color: var(--muted);
-  font-size: 17px; width: 36px; height: 36px;
+  width: 34px; height: 34px;
   display: inline-flex; align-items: center; justify-content: center;
   cursor: pointer; border-radius: var(--r-sm);
-  transition: background .15s, color .15s;
 }
 .icon:hover { background: var(--s2); color: var(--text); }
 .icon:active { background: var(--s3); }
-.icon.on { color: var(--accent); background: rgba(90, 169, 255, .12); }
+.icon.on { color: var(--accent); }
 
 /* Kichik yorliq: manba, masshtab */
 .chip {
   background: var(--s2);
-  border: 1px solid var(--line-2);
+  border: 1px solid var(--line);
   color: var(--text);
   font-size: 12px;
-  font-weight: 500;
   font-variant-numeric: tabular-nums;
-  padding: 5px 11px;
-  border-radius: 999px;
+  padding: 4px 9px;
+  border-radius: var(--r-sm);
   cursor: pointer;
-  transition: border-color .15s, background .15s;
   white-space: nowrap;
 }
-.chip:hover { border-color: var(--accent); background: var(--s3); }
+.chip:hover { background: var(--s3); }
 .chip[hidden] { display: none; }
 
 .hint {
-  margin: 10px 0 0;
+  margin: 8px 0 0;
   font-size: 12px;
-  line-height: 1.55;
+  line-height: 1.5;
   color: var(--muted);
 }
 
@@ -158,7 +155,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 #screen.hidden { visibility: hidden; }
 
-/* Ekran yo'q holat: markazdagi karta */
+/* Ekran yo'q holat */
 #placeholder {
   position: absolute;
   inset: 0;
@@ -170,30 +167,19 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   color: var(--muted);
   text-align: center;
   padding: 24px;
-  background:
-    radial-gradient(60% 50% at 50% 30%, rgba(90, 169, 255, .08), transparent 70%),
-    var(--s0);
+  background: var(--s0);
 }
 #placeholder[hidden] { display: none; }
-.ph-icon {
-  width: 72px; height: 72px;
-  display: grid; place-items: center;
-  font-size: 34px;
-  border-radius: 50%;
-  background: var(--s2);
-  border: 1px solid var(--line-2);
-  box-shadow: var(--shadow);
-}
-/* pre-line: ko'rsatma bir necha qatordan iborat, qatorlar telefonda
-   ham saqlansin - aks holda hammasi bitta abzatsga qo'shilib ketadi */
-.ph-text { max-width: 300px; font-size: 13.5px; line-height: 1.65; white-space: pre-line; }
+.ph-icon { color: var(--dim); }
+.ph-icon svg.ic { width: 36px; height: 36px; stroke-width: 1.5; }
+/* pre-line: ko'rsatma bir necha qatordan iborat, qatorlar saqlansin */
+.ph-text { max-width: 300px; font-size: 13.5px; line-height: 1.6; white-space: pre-line; }
 .ph-btn {
-  background: linear-gradient(180deg, var(--accent), var(--accent-2));
-  color: var(--accent-ink); border: 0;
-  padding: 12px 28px; border-radius: 999px; font-size: 15px; font-weight: 600;
-  box-shadow: var(--glow);
+  background: var(--accent); color: var(--ink); border: 0;
+  padding: 10px 22px; border-radius: var(--r); font-size: 14px; font-weight: 600;
   cursor: pointer;
 }
+.ph-btn:hover { background: var(--accent-hi); }
 
 /* Ekran ko'rsatkichi va almashtirgichi */
 #monbar {
@@ -204,54 +190,51 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(17, 21, 27, .82);
-  border: 1px solid var(--line-2);
-  backdrop-filter: blur(10px);
+  padding: 5px 10px;
+  border-radius: var(--r);
+  background: var(--s1);
+  border: 1px solid var(--line);
   /* Odatda umuman ko'rinmaydi: ekran tugmalari pastki qatorda bor,
      bu esa faqat almashtirilganda qisqa vaqt chiqadigan tasdiq. */
   opacity: 0;
-  transition: opacity .25s;
+  transition: opacity .2s;
   z-index: 5;
   pointer-events: none;
 }
 #monbar.show { opacity: 1; }
 #monbar[hidden] { display: none; }
 #monbar .md {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--dim);
-  transition: width .2s, background .2s;
+  transition: width .15s, background .15s;
 }
 #monbar .md.on {
-  width: 22px;
-  border-radius: 999px;
+  width: 18px;
+  border-radius: 3px;
   background: var(--accent);
 }
 
 /* Trackpad rejimida barmoq qayerga tegayotganini ko'rsatuvchi nuqta */
 #cursorHint {
   position: absolute;
-  width: 34px; height: 34px;
-  margin: -17px 0 0 -17px;
+  width: 32px; height: 32px;
+  margin: -16px 0 0 -16px;
   border-radius: 50%;
-  border: 2px solid rgba(90, 169, 255, .9);
-  background: rgba(90, 169, 255, .14);
+  border: 2px solid var(--accent);
   pointer-events: none;
   opacity: 0;
-  transition: opacity .18s;
+  transition: opacity .15s;
 }
-#cursorHint.show { opacity: 1; }
+#cursorHint.show { opacity: .9; }
 /* Ushlab turilgan holat: rang o'zgaradi va barmoq ko'tarilguncha
    ekranda qoladi - foydalanuvchi ushlaganini bilib tursin. */
 #cursorHint.grab {
   border-color: var(--ok);
-  background: rgba(52, 211, 153, .18);
-  width: 40px;
-  height: 40px;
-  margin: -20px 0 0 -20px;
+  width: 38px;
+  height: 38px;
+  margin: -19px 0 0 -19px;
 }
 
 /* ---------- pastki qator ---------- */
@@ -260,54 +243,44 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   position: fixed;
   bottom: 0; left: 0; right: 0;
   height: calc(var(--tool) + env(safe-area-inset-bottom));
-  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
   display: flex;
   align-items: stretch;
-  gap: 8px;
-  background: rgba(10, 12, 16, .84);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  gap: 6px;
+  background: var(--s1);
   border-top: 1px solid var(--line);
   z-index: 20;
 }
 
 .tool {
   flex: 1;
-  background: var(--s1);
+  background: var(--s2);
   border: 1px solid var(--line);
   border-radius: var(--r);
   color: var(--text);
-  font-size: 14px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
   cursor: pointer;
-  transition: background .15s, border-color .15s, transform .08s;
+  padding: 0;
 }
-.tool:active { transform: scale(.97); }
-.tool span { font-size: 18px; line-height: 1; }
-.tool i {
-  font-style: normal; font-size: 9.5px; font-weight: 500;
-  color: var(--muted); letter-spacing: .4px; text-transform: uppercase;
-}
-.tool.wide { flex: 1.2; font-size: 13px; }
+.tool span { font-size: 15px; font-weight: 600; line-height: 1; display: flex; align-items: center; justify-content: center; height: 18px; font-variant-numeric: tabular-nums; }
+.tool span svg.ic { width: 18px; height: 18px; }
+.tool i { font-style: normal; font-size: 10px; color: var(--muted); line-height: 1; }
+.tool.wide { flex: 1.2; }
 
 #toolMid {
   flex: 2.4;
   display: flex;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
 }
 #toolMid .tool { flex: 1; }
-.tool.active, .tool:active {
-  background: linear-gradient(180deg, var(--accent), var(--accent-2));
-  color: var(--accent-ink);
-  border-color: transparent;
-  box-shadow: var(--glow);
-}
-.tool.active i, .tool:active i { color: rgba(6, 22, 38, .75); }
+.tool:active { background: var(--s3); }
+.tool.active { background: var(--accent); color: var(--ink); border-color: var(--accent); }
+.tool.active i { color: var(--ink); opacity: .75; }
 
 /* ---------- klavishlar ---------- */
 
@@ -317,15 +290,15 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   left: 0; right: 0;
   background: var(--s1);
   border-top: 1px solid var(--line);
-  padding: 8px 8px 10px;
+  padding: 8px 8px 8px;
   z-index: 19;
 }
 #keyrow[hidden] { display: none; }
 
 .krow {
   display: flex;
-  gap: 6px;
-  margin-bottom: 6px;
+  gap: 5px;
+  margin-bottom: 5px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -333,30 +306,27 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 .k {
   flex: 1 0 auto;
-  min-width: 46px;
-  padding: 10px 8px;
+  min-width: 44px;
+  padding: 9px 7px;
   background: var(--s2);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   color: var(--text);
   font-size: 13px;
-  font-weight: 500;
   cursor: pointer;
-  transition: background .12s;
 }
-.k:active { background: var(--accent); color: var(--accent-ink); }
-.k.mod.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.k:active { background: var(--accent); color: var(--ink); }
+.k.mod.on { background: var(--accent); color: var(--ink); border-color: var(--accent); }
 
 #typer {
   width: 100%;
-  padding: 11px 13px;
+  padding: 10px 12px;
   background: var(--s2);
-  border: 1px solid var(--line-2);
+  border: 1px solid var(--line);
   border-radius: var(--r-sm);
   color: var(--text);
   font-size: 16px; /* 16px dan kichik bo'lsa iOS sahifani kattalashtiradi */
   outline: none;
-  transition: border-color .15s;
 }
 #typer:focus { border-color: var(--accent); }
 #typer::placeholder { color: var(--dim); }
@@ -366,8 +336,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 #sheet {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, .6);
-  backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, .55);
   z-index: 40;
   display: flex;
   align-items: flex-end;
@@ -380,38 +349,30 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   overflow-y: auto;
   background: var(--s1);
   border-radius: var(--r-lg) var(--r-lg) 0 0;
-  border-top: 1px solid var(--line-2);
-  padding: 10px 16px calc(24px + env(safe-area-inset-bottom));
-  animation: rise .26s cubic-bezier(.2, .8, .2, 1);
-  box-shadow: 0 -20px 60px rgba(0, 0, 0, .5);
+  border-top: 1px solid var(--line);
+  padding: 8px 16px calc(20px + env(safe-area-inset-bottom));
+  animation: rise .2s ease-out;
 }
-/* Tortish tutqichi - bu oyna pastdan chiqishini bildiradi */
+/* Tortish tutqichi - oyna pastdan chiqishini bildiradi */
 .sheet-inner::before {
   content: "";
   display: block;
-  width: 40px; height: 4px;
-  margin: 2px auto 10px;
-  border-radius: 999px;
-  background: var(--line-2);
+  width: 36px; height: 4px;
+  margin: 2px auto 8px;
+  border-radius: 2px;
+  background: var(--s3);
 }
-@keyframes rise { from { transform: translateY(28px); opacity: .3; } }
+@keyframes rise { from { transform: translateY(20px); opacity: .5; } }
 
 .sheet-head {
   display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 2px;
 }
-.sheet-head strong { font-size: 17px; font-weight: 600; }
-.sheet-inner section {
-  padding: 14px;
-  margin-bottom: 10px;
-  background: var(--s2);
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-}
-.sheet-inner section:last-child { margin-bottom: 0; }
+.sheet-head strong { font-size: 16px; font-weight: 600; }
+.sheet-inner section { padding: 14px 0; border-bottom: 1px solid var(--line); }
+.sheet-inner section:last-child { border-bottom: 0; }
 .sheet-inner h3 {
-  margin: 0 0 10px; font-size: 11px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: .9px; color: var(--muted);
+  margin: 0 0 8px; font-size: 12px; font-weight: 600; color: var(--muted);
 }
 
 .row { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -419,42 +380,35 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 .line {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; padding: 8px 0; font-size: 14px;
-  border-top: 1px solid var(--line);
+  gap: 12px; padding: 7px 0; font-size: 14px;
 }
-.line:first-of-type { border-top: 0; }
 .line select, .line input[type=text] {
-  background: var(--s1); border: 1px solid var(--line-2);
-  color: var(--text); padding: 8px 10px; border-radius: var(--r-sm);
-  font-size: 15px; max-width: 62%;
+  background: var(--s2); border: 1px solid var(--line);
+  color: var(--text); padding: 7px 10px; border-radius: var(--r-sm);
+  font-size: 14px; max-width: 62%;
 }
 .line input[type=range] { max-width: 55%; accent-color: var(--accent); }
-.line input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); }
+.line input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--accent); }
 
 .btn {
-  background: var(--s1);
-  border: 1px solid var(--line-2);
+  background: var(--s2);
+  border: 1px solid var(--line);
   color: var(--text);
-  padding: 10px 14px;
-  border-radius: var(--r-sm);
+  padding: 9px 13px;
+  border-radius: var(--r);
   font-size: 14px;
-  font-weight: 500;
   cursor: pointer;
-  transition: background .12s, border-color .12s;
 }
-.btn:hover { border-color: var(--accent); }
-.btn:active { background: var(--accent); color: var(--accent-ink); }
-.btn.on {
-  background: linear-gradient(180deg, var(--accent), var(--accent-2));
-  color: var(--accent-ink); border-color: transparent;
-}
-.btn.ghost { background: none; border-color: transparent; color: var(--muted); width: 100%; margin-top: 10px; }
-.btn.ghost:hover { color: var(--bad); }
+.btn:hover { background: var(--s3); }
+.btn:active { background: var(--accent); color: var(--ink); }
+.btn.on { background: var(--accent); color: var(--ink); border-color: var(--accent); }
+.btn.ghost { background: none; border-color: transparent; color: var(--muted); width: 100%; margin-top: 8px; }
+.btn.ghost:hover { color: var(--bad); background: none; }
 .btn.danger:active { background: var(--bad); color: #fff; }
 
 .kv {
   display: flex; justify-content: space-between;
-  padding: 6px 0; font-size: 13px; color: var(--muted);
+  padding: 5px 0; font-size: 13px; color: var(--muted);
 }
 .kv b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
 
@@ -462,52 +416,44 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 #toast {
   position: fixed;
-  left: 50%; bottom: calc(var(--tool) + 24px + env(safe-area-inset-bottom));
-  transform: translate(-50%, 12px);
-  background: rgba(24, 29, 37, .92);
-  border: 1px solid var(--line-2);
-  backdrop-filter: blur(12px);
-  padding: 10px 18px;
-  border-radius: 999px;
+  left: 50%; bottom: calc(var(--tool) + 20px + env(safe-area-inset-bottom));
+  transform: translate(-50%, 8px);
+  background: var(--s2);
+  border: 1px solid var(--line);
+  padding: 9px 14px;
+  border-radius: var(--r);
   font-size: 13px;
-  font-weight: 500;
   opacity: 0;
   pointer-events: none;
-  transition: opacity .2s, transform .2s;
+  transition: opacity .15s, transform .15s;
   z-index: 50;
   max-width: 86vw;
   text-align: center;
-  box-shadow: var(--shadow);
 }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 /* ---------- oyna ichidagi ulash (QR) ---------- */
 
-/* Telefon ulanmaganda asosiy oynaning o'zida ko'rinadi. */
+/* Telefon ulanmaganda asosiy oynaning o'zida ko'rinadi. Alohida
+   karta emas - QR shunchaki matn ostida turadi. */
 #pairBox {
   display: flex; flex-direction: column; align-items: center; gap: 12px;
-  margin-top: 6px;
-  padding: 18px;
-  background: var(--s1);
-  border: 1px solid var(--line-2);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow);
+  margin-top: 8px;
 }
 #pairBox[hidden] { display: none; }
-#pairQr { background: #fff; padding: 12px; border-radius: var(--r); }
-#pairQr svg { display: block; width: min(220px, 50vw); height: auto; }
+#pairQr { background: #fff; padding: 10px; border-radius: var(--r); }
+#pairQr svg { display: block; width: min(200px, 48vw); height: auto; }
 #pairLink {
-  font-size: 11px; color: var(--muted); max-width: 440px;
-  word-break: break-all; text-align: center; line-height: 1.5;
-  font-variant-numeric: tabular-nums;
+  font: 11px/1.5 var(--mono); color: var(--dim); max-width: 440px;
+  word-break: break-all; text-align: center;
 }
-.pair-acts { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.pair-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
 .pair-btn {
-  background: var(--s2); border: 1px solid var(--line-2); color: var(--text);
-  padding: 9px 16px; border-radius: var(--r-sm); font-size: 13px; font-weight: 500;
-  cursor: pointer; transition: border-color .15s, background .15s;
+  background: var(--s2); border: 1px solid var(--line); color: var(--text);
+  padding: 8px 13px; border-radius: var(--r); font-size: 13px;
+  cursor: pointer;
 }
-.pair-btn:hover { border-color: var(--accent); background: var(--s3); }
+.pair-btn:hover { background: var(--s3); }
 .pair-btn[hidden] { display: none; }
 .pair-said { min-height: 16px; font-size: 12px; color: var(--ok); }
 .pair-said.bad { color: var(--bad); }
@@ -529,33 +475,22 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
   #stage { bottom: 0; }
 
-  /* "Telefon ulanmagan" ko'rsatmasi bir necha qatordan iborat -
-     qatorlar saqlanishi va joy kengroq bo'lishi kerak. */
-  .ph-text {
-    max-width: 460px;
-    font-size: 14px;
-    white-space: pre-line;
-  }
-  .ph-icon { width: 84px; height: 84px; font-size: 40px; }
-
-  /* Barmoq uchun mo'ljallangan o'lchamlar sichqoncha bilan kichik
-     ko'rinadi. Faqat yozuvni kattalashtiramiz - qator balandligi
-     --bar o'zgaruvchisiga bog'liq, unga tegmaymiz. */
-  .chip { font-size: 13px; }
+  .ph-text { max-width: 460px; font-size: 14px; }
 
   /* Sozlamalar oynasi kompyuterda pastdan emas, o'rtadan chiqadi */
   #sheet { align-items: center; justify-content: center; }
   .sheet-inner {
-    width: min(560px, 92vw);
+    width: min(540px, 92vw);
     max-height: 86vh;
     border-radius: var(--r-lg);
-    border: 1px solid var(--line-2);
+    border: 1px solid var(--line);
+    padding-top: 14px;
   }
   .sheet-inner::before { display: none; }
 
-  /* Ingichka, ko'zga tashlanmaydigan aylantirgich */
+  /* Ingichka aylantirgich */
   .sheet-inner::-webkit-scrollbar { width: 8px; }
-  .sheet-inner::-webkit-scrollbar-thumb { background: var(--s3); border-radius: 999px; }
+  .sheet-inner::-webkit-scrollbar-thumb { background: var(--s3); border-radius: 4px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

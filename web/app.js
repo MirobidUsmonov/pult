@@ -688,7 +688,8 @@ function makeTool(icon, caption, onTap, active) {
   const b = document.createElement("button");
   b.className = "tool" + (active ? " active" : "");
   const sp = document.createElement("span");
-  sp.textContent = icon;
+  // Belgi SVG bo'lishi mumkin (chiziqli), yoki oddiy matn (raqam, harf)
+  if (icon.startsWith("<svg")) sp.innerHTML = icon; else sp.textContent = icon;
   const i = document.createElement("i");
   i.textContent = caption;
   b.append(sp, i);
@@ -716,10 +717,11 @@ function buildToolMid() {
       ));
     });
   } else {
-    // Bitta ekranda almashtiradigan narsa yo'q - sichqoncha tugmalari
-    mid.appendChild(makeTool("🖯", "chap",
+    // Bitta ekranda almashtiradigan narsa yo'q - sichqoncha tugmalari.
+    // Belgi o'rniga harf: "chap"/"o'ng" yozuvi bilan birga bu aniqroq.
+    mid.appendChild(makeTool("L", "chap",
       () => link.send({ t: "mouse", a: "click", b: "left" })));
-    mid.appendChild(makeTool("🖱", "o‘ng",
+    mid.appendChild(makeTool("R", "o‘ng",
       () => link.send({ t: "mouse", a: "click", b: "right" })));
   }
 }
@@ -1282,10 +1284,17 @@ $("btnMode").addEventListener("click", () => {
     : "Sensor rejimi: qayerga bossang, sichqoncha o‘sha yerga bosadi");
 });
 
+/* Rejim tugmasining belgilari - chiziqli SVG, emoji emas: emoji har
+ * qurilmada boshqacha chiziladi va rangini boshqarib bo'lmaydi. */
+const MODE_ICONS = {
+  trackpad: '<svg class="ic" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 14h18M12 14v5"/></svg>',
+  touch: '<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5"/></svg>',
+};
+
 function updateModeButton() {
   const b = $("btnMode");
   const direct = prefs.mode === "touch";
-  b.querySelector("span").textContent = direct ? "👆" : "🖱";
+  b.querySelector("span").innerHTML = direct ? MODE_ICONS.touch : MODE_ICONS.trackpad;
   b.querySelector("i").textContent = direct ? "sensor" : "trackpad";
   // Faol holat ko'rinib tursin: tugma qaysi rejim YOQILGANINI ko'rsatadi,
   // bosilganda ikkinchisiga o'tadi.
@@ -1379,7 +1388,7 @@ function buildMonitors(monitors) {
 }
 
 function sourceLabel(src) {
-  return src.kind === "pc" ? `💻 ${src.name}` : `📱 ${src.name}`;
+  return src.kind === "pc" ? `Kompyuter · ${src.name}` : `Telefon · ${src.name}`;
 }
 
 function sourceList() {
