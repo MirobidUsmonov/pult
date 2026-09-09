@@ -35,12 +35,19 @@ import java.util.List;
  */
 public class HostsActivity extends Activity {
 
-    private static final int BG = 0xFF0B0D10;
-    private static final int PANEL = 0xFF14181D;
-    private static final int LINE = 0xFF262D36;
-    private static final int TEXT = 0xFFE7ECF2;
-    private static final int MUTED = 0xFF8B97A6;
-    private static final int ACCENT = 0xFF4DA3FF;
+    // Ranglar veb-interfeys bilan bir xil (style.css dagi o'zgaruvchilar):
+    // qatlamli qorong'i yuzalar, bitta urg'u rangi
+    private static final int BG = 0xFF0A0C10;
+    private static final int PANEL = 0xFF11151B;
+    private static final int PANEL2 = 0xFF181D25;
+    private static final int LINE = 0xFF222933;
+    private static final int LINE2 = 0xFF2E3742;
+    private static final int TEXT = 0xFFEEF2F7;
+    private static final int MUTED = 0xFF93A0B1;
+    private static final int ACCENT = 0xFF5AA9FF;
+    private static final int ACCENT_INK = 0xFF061626;
+    private static final int OK = 0xFF34D399;
+    private static final int OK_BG = 0xFF0F2A21;
 
     private static final int REQ_PROJECTION = 41;
 
@@ -143,15 +150,16 @@ public class HostsActivity extends Activity {
         TextView title = new TextView(this);
         title.setText("Pult");
         title.setTextColor(TEXT);
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 26);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 30);
         title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setLetterSpacing(-0.02f);
         root.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("Boshqariladigan kompyuterlar");
+        sub.setText("Telefon ↔ kompyuter");
         sub.setTextColor(MUTED);
-        sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-        sub.setPadding(0, dp(4), 0, dp(18));
+        sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        sub.setPadding(0, dp(2), 0, dp(20));
         root.addView(sub);
 
         ScrollView scroll = new ScrollView(this);
@@ -161,7 +169,9 @@ public class HostsActivity extends Activity {
         root.addView(scroll, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        TextView add = button("+  Kompyuter qo‘shish", ACCENT, 0xFF04121F);
+        TextView add = button("+  Kompyuter qo‘shish", ACCENT, ACCENT_INK);
+        add.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        add.setPadding(dp(16), dp(16), dp(16), dp(16));
         add.setOnClickListener(v -> askForLink());
         root.addView(add, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -183,16 +193,44 @@ public class HostsActivity extends Activity {
         if (all.isEmpty()) {
             // Bo'sh ro'yxat - ilovadagi birinchi ko'rinish. Shunchaki
             // "bo'sh" deb yozish o'rniga nima qilish kerakligini aytamiz.
+            LinearLayout box = new LinearLayout(this);
+            box.setOrientation(LinearLayout.VERTICAL);
+            box.setGravity(Gravity.CENTER_HORIZONTAL);
+            box.setBackground(rounded(PANEL, LINE, 20));
+            box.setPadding(dp(24), dp(32), dp(24), dp(28));
+
+            TextView icon = new TextView(this);
+            icon.setText("🖥");
+            icon.setTextSize(TypedValue.COMPLEX_UNIT_SP, 40);
+            icon.setGravity(Gravity.CENTER);
+            icon.setBackground(rounded(PANEL2, LINE2, 36));
+            icon.setPadding(dp(18), dp(12), dp(18), dp(12));
+            box.addView(icon);
+
+            TextView head = new TextView(this);
+            head.setText("Hali kompyuter yo‘q");
+            head.setTextColor(TEXT);
+            head.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+            head.setTypeface(Typeface.DEFAULT_BOLD);
+            head.setGravity(Gravity.CENTER);
+            head.setPadding(0, dp(18), 0, dp(8));
+            box.addView(head);
+
             TextView empty = new TextView(this);
-            empty.setText("Hali kompyuter qo‘shilmagan.\n\n"
-                    + "Kompyuterda soat yonidagi Pult belgisini bosing "
-                    + "va «Telefonni ulash» ni tanlang — QR kod chiqadi.\n\n"
-                    + "Keyin pastdagi tugmani bosing.");
+            empty.setText("Kompyuterda soat yonidagi Pult belgisini bosing — "
+                    + "oynada QR kod chiqadi. Uni skanerlang yoki havolani "
+                    + "pastdagi tugma orqali qo‘shing.");
             empty.setTextColor(MUTED);
+            empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             empty.setGravity(Gravity.CENTER);
-            empty.setLineSpacing(0, 1.25f);
-            empty.setPadding(dp(10), dp(46), dp(10), 0);
-            list.addView(empty);
+            empty.setLineSpacing(0, 1.3f);
+            box.addView(empty);
+
+            LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            elp.topMargin = dp(8);
+            box.setLayoutParams(elp);
+            list.addView(box);
             return;
         }
         // Uzatish yoqilgan bo'lsa buni ro'yxat tepasida aniq ko'rsatamiz:
@@ -202,20 +240,18 @@ public class HostsActivity extends Activity {
             LinearLayout banner = new LinearLayout(this);
             banner.setOrientation(LinearLayout.HORIZONTAL);
             banner.setGravity(Gravity.CENTER_VERTICAL);
-            banner.setBackground(rounded(0xFF10261A, 0xFF3DDC84));
-            banner.setPadding(dp(14), dp(12), dp(10), dp(12));
+            banner.setBackground(rounded(OK_BG, OK, 16));
+            banner.setPadding(dp(16), dp(12), dp(10), dp(12));
 
             TextView text = new TextView(this);
             text.setText("●  Ekran kompyuterga uzatilmoqda");
-            text.setTextColor(0xFF3DDC84);
+            text.setTextColor(OK);
             text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             text.setTypeface(Typeface.DEFAULT_BOLD);
             banner.addView(text, new LinearLayout.LayoutParams(0,
                     ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-            TextView stop = button("To‘xtatish", 0xFF3DDC84, 0xFF04121F);
-            stop.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-            stop.setPadding(dp(14), dp(8), dp(14), dp(8));
+            TextView stop = pill("To‘xtatish", OK, ACCENT_INK);
             stop.setOnClickListener(v -> stopShare());
             banner.addView(stop);
 
@@ -242,15 +278,28 @@ public class HostsActivity extends Activity {
     private View card(Hosts.Host h) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
-        card.setBackground(rounded(PANEL, LINE));
-        card.setPadding(dp(16), dp(14), dp(16), dp(14));
+        card.setBackground(rounded(PANEL, LINE, 18));
+        card.setPadding(dp(18), dp(16), dp(18), dp(16));
+
+        // Nom qatori: holat nuqtasi + nom
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView dot = new TextView(this);
+        dot.setText("●");
+        dot.setTextColor(h.pin.isEmpty() ? MUTED : OK);
+        dot.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        dot.setPadding(0, 0, dp(8), 0);
+        head.addView(dot);
 
         TextView name = new TextView(this);
         name.setText(h.display());
         name.setTextColor(TEXT);
-        name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
+        name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
         name.setTypeface(Typeface.DEFAULT_BOLD);
-        card.addView(name);
+        head.addView(name);
+        card.addView(head);
 
         TextView url = new TextView(this);
         String note = h.url;
@@ -262,33 +311,33 @@ public class HostsActivity extends Activity {
             if (!Hosts.isLocal(u)) far++;
         }
         if (far > 0 && Hosts.isLocal(h.url)) note += "  ·  internet orqali ham";
-        if (h.pin.isEmpty()) note += "  ·  sertifikat hali tasdiqlanmagan";
+        if (h.pin.isEmpty()) note += "  ·  hali tasdiqlanmagan";
         url.setText(note);
         url.setTextColor(MUTED);
-        url.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        url.setPadding(0, dp(3), 0, dp(12));
+        url.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f);
+        url.setPadding(dp(18), dp(4), 0, dp(14));
         card.addView(url);
 
         // Tugmalar qatori
         LinearLayout acts = new LinearLayout(this);
         acts.setOrientation(LinearLayout.HORIZONTAL);
 
-        TextView control = button("Boshqarish", ACCENT, 0xFF04121F);
-        control.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        control.setPadding(dp(12), dp(12), dp(12), dp(12));
+        TextView control = button("Boshqarish", ACCENT, ACCENT_INK);
+        control.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f);
+        control.setPadding(dp(12), dp(13), dp(12), dp(13));
         control.setOnClickListener(v -> open(h));
         LinearLayout.LayoutParams l1 = new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        l1.rightMargin = dp(8);
+        l1.rightMargin = dp(10);
         acts.addView(control, l1);
 
         boolean on = ScreenService.isRunning();
         TextView share = on
-                ? button("◼  To‘xtatish", 0xFF10261A, 0xFF3DDC84)
-                : button("Ekranimni uzatish", PANEL, TEXT);
-        share.setBackground(rounded(on ? 0xFF10261A : PANEL, on ? 0xFF3DDC84 : 0xFF2F3946));
-        share.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        share.setPadding(dp(12), dp(12), dp(12), dp(12));
+                ? button("◼  To‘xtatish", OK_BG, OK)
+                : button("Ekranimni uzatish", PANEL2, TEXT);
+        share.setBackground(rounded(on ? OK_BG : PANEL2, on ? OK : LINE2, 14));
+        share.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f);
+        share.setPadding(dp(12), dp(13), dp(12), dp(13));
         share.setOnClickListener(v -> {
             if (ScreenService.isRunning()) stopShare();
             else startShare(h);
@@ -306,7 +355,7 @@ public class HostsActivity extends Activity {
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.bottomMargin = dp(10);
+        lp.bottomMargin = dp(12);
         card.setLayoutParams(lp);
         return card;
     }
@@ -615,6 +664,7 @@ public class HostsActivity extends Activity {
 
     // ------------------------------------------------------------ yordamchi
 
+    /** To'ldirilgan tugma. */
     private TextView button(String text, int bg, int fg) {
         TextView b = new TextView(this);
         b.setText(text);
@@ -623,18 +673,33 @@ public class HostsActivity extends Activity {
         b.setTypeface(Typeface.DEFAULT_BOLD);
         b.setGravity(Gravity.CENTER);
         b.setPadding(dp(16), dp(15), dp(16), dp(15));
-        GradientDrawable d = new GradientDrawable();
-        d.setColor(bg);
-        d.setCornerRadius(dp(14));
-        b.setBackground(d);
+        b.setBackground(rounded(bg, bg, 14));
+        b.setClickable(true);
+        return b;
+    }
+
+    /** Kichik, to'liq yumaloq tugma (banner ichidagi kabi). */
+    private TextView pill(String text, int bg, int fg) {
+        TextView b = new TextView(this);
+        b.setText(text);
+        b.setTextColor(fg);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        b.setTypeface(Typeface.DEFAULT_BOLD);
+        b.setGravity(Gravity.CENTER);
+        b.setPadding(dp(14), dp(8), dp(14), dp(8));
+        b.setBackground(rounded(bg, bg, 999));
         b.setClickable(true);
         return b;
     }
 
     private GradientDrawable rounded(int fill, int stroke) {
+        return rounded(fill, stroke, 14);
+    }
+
+    private GradientDrawable rounded(int fill, int stroke, int radiusDp) {
         GradientDrawable d = new GradientDrawable();
         d.setColor(fill);
-        d.setCornerRadius(dp(14));
+        d.setCornerRadius(dp(radiusDp));
         d.setStroke(dp(1), stroke);
         return d;
     }
