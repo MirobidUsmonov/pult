@@ -217,6 +217,10 @@ let streaming = false;
 // yurganda server buni o'zi o'zgartiradi, shuning uchun sozlamalardagi
 // tanlovga emas, serverning javobiga ishonamiz.
 let currentMonitor = 0;
+// Hozir qaysi manba ko'rilyapti: "local" - kompyuterning o'zi, yoki
+// ulangan telefonning raqami.
+let currentSource = "local";
+let sources = [];
 /*
  * Ko'rinish holati.
  *
@@ -279,7 +283,9 @@ link.onJson = (msg) => {
   if (msg.t === "hello") {
     host = msg.host;
     $("hostName").textContent = host.name;
+    updateHostLabel();
     $("sheetHost").textContent = host.name;
+    sources = msg.sources || [];
     currentMonitor = (msg.stream && msg.stream.monitor) || 0;
     if (msg.stream && typeof msg.stream.follow_cursor === "boolean") {
       $("chkFollow").checked = msg.stream.follow_cursor;
@@ -287,6 +293,7 @@ link.onJson = (msg) => {
     buildMonitors(host.monitors);
     buildMonbar();
     buildToolMid();
+    buildSources();
     buildCommands(host.commands || []);
     applyPrefsToUi();
     if (!decoder.supported) {
@@ -319,6 +326,15 @@ link.onJson = (msg) => {
     toast(msg.result || "bajarildi");
   } else if (msg.t === "monitor_map") {
     toast("Ekranlar almashtirildi");
+  } else if (msg.t === "sources") {
+    sources = msg.list || [];
+    buildSources();
+  } else if (msg.t === "source_gone") {
+    toast("Manba uzildi");
+    currentSource = "local";
+    buildSources();
+    buildToolMid();
+    startStream();
   }
 };
 
@@ -353,6 +369,13 @@ addEventListener("orientationchange", () => {
   setTimeout(refreshView, 250);
 });
 
+function updateHostLabel() {
+  const src = sources.find((x) => x.id === currentSource);
+  $("hostName").textContent = src && src.id !== "local"
+    ? src.name
+    : (host ? host.name : "Pult");
+}
+
 function fmtRate(kbps) {
   return kbps >= 1000 ? (kbps / 1000).toFixed(1) + " Mbit" : kbps + " kbit";
 }
@@ -362,6 +385,7 @@ function startStream() {
   setPlaceholder("Ekran kutilmoqda…");
   link.send({
     t: "view", on: true,
+    source: currentSource,
     // Serverdagi joriy ekran: kursor ekranlar orasida yurgan bo'lsa
     // server allaqachon boshqasiga o'tgan bo'lishi mumkin, uni
     // eski tanlovga majburan qaytarmaymiz.
@@ -634,7 +658,7 @@ function makeTool(icon, caption, onTap, active) {
 function buildToolMid() {
   const mid = $("toolMid");
   mid.innerHTML = "";
-  const list = monitorsByPosition();
+  const list = currentSource === "local" ? monitorsByPosition() : [];
   if (list.length >= 2) {
     list.forEach((m, i) => {
       mid.appendChild(makeTool(
@@ -1256,6 +1280,42 @@ function buildMonitors(monitors) {
     b.onclick = () => selectMonitor(m.index);
     row.appendChild(b);
   });
+}
+
+function sourceLabel(src) {
+  return src.kind === "pc" ? `💻 ${src.name}` : `📱 ${src.name}`;
+}
+
+function buildSources() {
+  const row = $("sourceRow");
+  row.innerHTML = "";
+  const list = sources.length ? sources
+    : [{ id: "local", name: (host && host.name) || "Kompyuter", kind: "pc" }];
+  list.forEach((src) => {
+    const b = document.createElement("button");
+    b.className = "btn" + (currentSource === src.id ? " on" : "");
+    b.textContent = sourceLabel(src);
+    b.onclick = () => selectSource(src.id);
+    row.appendChild(b);
+  });
+  // Ekran tanlash faqat kompyuterda ma'noga ega - telefonda bitta ekran
+  $("monitorSection").hidden = currentSource !== "local";
+  $("sourceHint").hidden = list.length > 1;
+}
+
+function selectSource(id) {
+  if (id === currentSource) return;
+  currentSource = id;
+  decoder.close();
+  setPlaceholder("Ulanmoqda…");
+  buildSources();
+  buildToolMid();
+  buildMonbar();
+  updateHostLabel();
+  resetView();
+  link.send({ t: "view", on: true, source: id });
+  const src = sources.find((x) => x.id === id);
+  toast(src ? sourceLabel(src) : id);
 }
 
 const CMD_LABELS = {
