@@ -199,7 +199,31 @@ public class ScreenService extends Service {
         Log.i(TAG, "qayta ulanish " + attempt + ", " + delay + " ms dan keyin");
         main.postDelayed(() -> {
             if (!running || stopped) return;
-            connect(baseUrl, token, pin);
+            // Manzil qaytadan tanlanadi, eskisiga yopishib olmaymiz.
+            // Ekran o'chganda telefon Wi-Fi dan mobil internetga o'tishi
+            // mumkin - o'shanda mahalliy manzil boshqa hech qachon
+            // ishlamaydi va bir xil manzilga urinish behuda ketardi.
+            final String last = baseUrl;
+            new Thread(() -> {
+                String best = last;
+                try {
+                    Hosts.Host known = new Hosts(this).find(last);
+                    if (known != null && known.candidates().size() > 1) {
+                        String picked = Reach.pick(known, this);
+                        if (picked != null) best = picked;
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "manzil tanlanmadi: " + e);
+                }
+                final String chosen = best;
+                main.post(() -> {
+                    if (!running || stopped) return;
+                    if (!chosen.equals(last)) {
+                        Log.i(TAG, "boshqa manzilga o'tamiz: " + chosen);
+                    }
+                    connect(chosen, token, pin);
+                });
+            }, "pult-reconnect").start();
         }, delay);
     }
 

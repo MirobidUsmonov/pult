@@ -91,6 +91,8 @@ class ControllerSession:
         self.source_gop: list[bytes] = []
         # Boshqaruvchi bo'lsa - hozir qaysi manbani ko'ryapti
         self.source_id = "local"
+        # Qachon ulangani: uzilganda qancha ushlab turgani logga tushadi
+        self.started_at = time.monotonic()
 
     # -- hayot sikli -------------------------------------------------------
 
@@ -501,7 +503,10 @@ class HostContext:
     async def remove_source(self, sess: "ControllerSession") -> None:
         if self.remote_sources.pop(sess.source_key, None) is None:
             return
-        log.info("manba uzildi: %s", sess.name)
+        # Qancha ushlab turgani ham yoziladi: telefon tez-tez uzilib
+        # tursa, sababini izlashda birinchi ko'radigan raqam shu.
+        alive = time.monotonic() - sess.started_at if sess.started_at else 0.0
+        log.info("manba uzildi: %s (%.0f soniya ushlab turdi)", sess.name, alive)
         # Uni ko'rayotganlarni kompyuter ekraniga qaytaramiz
         for s in list(self.sessions):
             if s.source_id == sess.source_key:
