@@ -283,11 +283,15 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                 await ws.send_json({"t": "view", "on": True, "width": 854,
                                     "fps": 24, "bitrate": 2000})
 
+                # Kutish oldingidan uzunroq: ddagrab birinchi kadrni
+                # ekran o'zgarganda beradi va ish stoli qimirlamay
+                # tursa agent gdigrab'ga o'tadi. Shu o'tish vaqti ham
+                # sig'ishi kerak.
                 stream, frames, keys, total = None, 0, 0, 0
-                end = time.monotonic() + 8
+                end = time.monotonic() + 15
                 while time.monotonic() < end and (frames < 40 or not stream):
                     try:
-                        m = await asyncio.wait_for(ws.receive(), timeout=3)
+                        m = await asyncio.wait_for(ws.receive(), timeout=6)
                     except asyncio.TimeoutError:
                         break
                     if m.type == aiohttp.WSMsgType.TEXT:

@@ -172,6 +172,17 @@ class ScreenCapture:
         self._gop: list[bytes] = []      # oxirgi kalit kadrdan beri kelgan kadrlar
         self._lock = asyncio.Lock()
         self._stderr_tail: list[str] = []
+        self._last_spawn = 0.0
+        # ddagrab birinchi kadrni ekran O'ZGARGANDA beradi. Ish stoli
+        # qimirlamay tursa (to'liq ekranli o'yin ochiq bo'lsa) u
+        # cheksiz kutishi mumkin. Shunda gdigrab'ga o'tamiz: u sekinroq
+        # va protsessorni ko'proq yeydi, lekin taymer bo'yicha ishlaydi
+        # va doim kadr beradi.
+        self._no_dda = False
+        # Kodek satri aniqlanganda chaqiriladi. Kutish o'rniga xabar
+        # berish ishonchliroq: ekran olish qancha kech boshlansa ham
+        # tomoshabin oxir-oqibat to'g'ri xabarni oladi.
+        self.on_codec = None
 
         # Kodek satri faqat birinchi kalit kadr kelganda ma'lum bo'ladi
         # (u SPS ichidan o'qiladi). Tomoshabinga undan oldin xabar
@@ -193,7 +204,7 @@ class ScreenCapture:
         if mon is None and self.monitors:
             mon = self.monitors[0]
 
-        if system == "Windows" and "ddagrab" in self.caps.filters:
+        if system == "Windows" and "ddagrab" in self.caps.filters and not self._no_dda:
             # Desktop Duplication API - ekran GPU xotirasida olinadi
             src = (
                 f"ddagrab=output_idx={source}"
@@ -294,6 +305,16 @@ class ScreenCapture:
             await self._kill()
 
     async def _spawn(self) -> None:
+        # Ketma-ket tez qayta ishga tushirmaymiz. Ekran almashtirilganda
+        # bu bir necha marta ketma-ket chaqirilishi mumkin, kodlagich va
+        # ekran ushlagichi esa oldingi nusxadan bo'shashga ulgurmaydi -
+        # natijada ffmpeg tirik qoladi-yu, hech narsa chiqarmaydi.
+        gap = time.monotonic() - self._last_spawn
+        if gap < 0.6:
+            await asyncio.sleep(0.6 - gap)
+        self._last_spawn = time.monotonic()
+        self._codec_retried = False
+
         cmd = self.build_command(self.cfg)
         log.info("ekran olish boshlandi: %s", " ".join(cmd))
 
@@ -317,11 +338,38 @@ class ScreenCapture:
         self._tasks = [
             asyncio.create_task(self._read_stdout(), name="pult-capture-stdout"),
             asyncio.create_task(self._read_stderr(), name="pult-capture-stderr"),
+            asyncio.create_task(self._watchdog(), name="pult-capture-watchdog"),
         ]
 
+    async def _watchdog(self) -> None:
+        """Kadr kelmasa boshqa ekran olish usuliga o'tadi.
+
+        Vazifa _kill() da bekor qilinadi, shuning uchun tomoshabin
+        ketgandan keyin ekran olishni qayta yoqib yuborish xavfi yo'q.
+        """
+        # Sog'lom holatda birinchi kadr bir soniyagacha keladi. Uzoq
+        # kutishning ma'nosi yo'q: kutish faqat foydalanuvchini qora
+        # ekran oldida ushlab turadi, gdigrab esa baribir ishlaydi -
+        # u shunchaki protsessorni ko'proq yeydi.
+        await asyncio.sleep(2.5)
+        if self.stats.bytes_out or self._no_dda or self._proc is None:
+            return
+        log.warning("ddagrab 2.5 soniyada kadr bermadi - gdigrab'ga o'tamiz "
+                    "(ish stoli qimirlamayotgan bo'lishi mumkin)")
+        self._no_dda = True
+        async with self._lock:
+            if self._proc is not None:
+                await self._kill()
+                await self._spawn()
+
     async def _kill(self) -> None:
+        # Joriy vazifani bekor qilmaymiz: qorovul ham shu ro'yxatda va
+        # u _kill() ni o'zi chaqiradi - o'zini bekor qilsa keyingi
+        # qatorga yetmasdan uzilib qolardi.
+        current = asyncio.current_task()
         for t in self._tasks:
-            t.cancel()
+            if t is not current:
+                t.cancel()
         self._tasks = []
         proc = self._proc
         self._proc = None
@@ -352,6 +400,15 @@ class ScreenCapture:
                             self.codec = codec_string(au)
                             if self.codec:
                                 self.codec_ready.set()
+                                # Kutgan tomoshabinlar bo'lsa xabar
+                                # beramiz. Kodek kech kelishi mumkin
+                                # (pastda, wait_codec izohida), shunda
+                                # ular allaqachon bo'sh kodek bilan
+                                # xabar olgan bo'ladi.
+                                if self.on_codec:
+                                    res = self.on_codec()
+                                    if asyncio.iscoroutine(res):
+                                        await res
                     else:
                         # Bufer cheksiz o'smasligi uchun chegara qo'yamiz
                         if len(self._gop) < self.cfg.fps * 4:
@@ -387,12 +444,35 @@ class ScreenCapture:
         except Exception:
             pass
 
-    async def wait_codec(self, timeout: float = 5.0) -> str | None:
-        """Kodek satri ma'lum bo'lguncha kutadi (birinchi kalit kadrgacha)."""
+    async def wait_codec(self, timeout: float = 12.0) -> str | None:
+        """Kodek satri ma'lum bo'lguncha kutadi (birinchi kalit kadrgacha).
+
+        Kutish vaqti ataylab uzun. Sababi Desktop Duplication API'ning
+        ishlash tartibida: u birinchi kadrni ekran O'ZGARGANDA beradi.
+        Ish stoli qimirlamay tursa (masalan to'liq ekranli o'yin
+        ochiq bo'lsa) birinchi kadr bir necha soniya kechikadi -
+        o'lchashda 2.7 dan 6 soniyagacha chiqdi.
+
+        Kelmasa ham qo'rqinchli emas: kodek aniqlangan zahoti
+        on_codec orqali tomoshabinlarga qayta xabar beriladi.
+        """
         try:
             await asyncio.wait_for(self.codec_ready.wait(), timeout=timeout)
+            return self.codec
         except asyncio.TimeoutError:
-            log.warning("kodek satri %.0f soniyada aniqlanmadi", timeout)
+            pass
+
+        # Sababini yozib qo'yamiz: ilgari bu xato butunlay jim edi va
+        # nima bo'lganini logdan bilib bo'lmasdi
+        log.warning("kodek satri %.0f soniyada aniqlanmadi (%d bayt keldi)%s",
+                    timeout, self.stats.bytes_out,
+                    "; ffmpeg: " + " | ".join(self._stderr_tail[-3:])
+                    if self._stderr_tail else "")
+
+        # Qayta ishga tushirmaymiz: ekran olish o'zi ishlab turibdi va
+        # kadr kelishi bilan on_codec tomoshabinga xabar beradi. Qayta
+        # yoqish faqat kechiktirar, ustiga tomoshabin ketib bo'lgan
+        # bo'lsa ekran olishni bekordan-bekor qaytadan yoqib yuborardi.
         return self.codec
 
     def catch_up(self) -> list[bytes]:

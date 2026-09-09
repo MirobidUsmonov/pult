@@ -445,6 +445,11 @@ class HostContext:
         self.started_at = time.time()
 
         self.capture = ScreenCapture(caps, self._on_unit, monitors=self.monitors)
+        # Kodek satri kech aniqlansa ham tomoshabin uni oladi. Ilgari
+        # faqat kutilardi: kelmasa "stream" xabari bo'sh kodek bilan
+        # ketar va boshqa hech qachon yangilanmasdi - tomoshabin
+        # "Ekran kutilmoqda" da abadiy qolib ketardi.
+        self.capture.on_codec = self._codec_ready
         self._stats_task: asyncio.Task | None = None
         self._cross_since = 0.0
 
@@ -741,6 +746,21 @@ class HostContext:
             asyncio.create_task(self._announce_stream(), name="pult-announce")
         elif not want and self.capture.running:
             await self.capture.stop()
+
+    def _codec_ready(self) -> None:
+        """Kodek aniqlandi - ko'rayotganlarga darhol aytamiz."""
+        asyncio.create_task(self._send_stream(), name="pult-codec")
+
+    async def _send_stream(self) -> None:
+        msg = self.stream_message()
+        for s in list(self.sessions):
+            if not s.viewing:
+                continue
+            try:
+                await s.send_json(msg)
+                await s.send_catch_up()
+            except Exception:
+                pass
 
     async def _announce_stream(self) -> None:
         await self.capture.wait_codec()
