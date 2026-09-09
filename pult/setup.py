@@ -383,6 +383,13 @@ def install(quiet: bool = False) -> tuple[bool, str]:
         cfg.telegram.on_start = True
         cfg.telegram.bot_token = tg["bot_token"]
         cfg.telegram.chat_id = str(tg["chat_id"])
+    upd = p.get("update") or {}
+    if upd.get("mode"):
+        cfg.update.mode = upd["mode"]
+        cfg.update.source = upd.get("source", "")
+        if upd.get("check_minutes"):
+            cfg.update.check_minutes = int(upd["check_minutes"])
+
     ff = data / "bin" / "ffmpeg.exe"
     if ff.is_file():
         cfg.ffmpeg_path = str(ff)
@@ -411,6 +418,8 @@ def install(quiet: bool = False) -> tuple[bool, str]:
                  "uni qo'lda sozlash kerak bo'ladi.")
     if cfg.telegram.enabled:
         lines.append("Kompyuter yonganda Telegramga xabar keladi.")
+    if (cfg.update.mode or "off").lower() not in ("off", "", "none"):
+        lines.append("Yangi versiya chiqsa o'zi yangilanadi.")
     if cfg.remote.mode == "cloudflare":
         if (data / "bin" / "cloudflared-windows-amd64.exe").is_file():
             lines.append("Tashqi kirish tayyor - har qanday tarmoqdan ishlaydi.")

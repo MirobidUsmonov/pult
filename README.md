@@ -371,6 +371,35 @@ Running the slim `Pult.exe` directly also offers to install itself, so the
 installer is a convenience rather than a requirement. `Pult.exe --uninstall`
 removes the logon task.
 
+### Updating itself
+
+Re-running an installer for every change gets old fast. Point the agent at a
+source and it keeps itself current:
+
+```bash
+python -m pult --update "\\\\server\\share\\pult"     # a folder, local or on the network
+python -m pult --update "https://example.com/Pult.exe" # or a URL
+python -m pult --update off
+```
+
+It checks at startup — before the server binds, so the new copy gets the port —
+and every 15 minutes while running, applying an update only when nobody is
+connected. Interrupting a live stream to install a new build is worse than
+waiting.
+
+There are no version numbers. The agent compares the SHA-256 of the source
+against its own file: different means newer. That way a build doesn't have to
+remember to bump anything, and re-pointing at an older build rolls back.
+
+The swap leans on a Windows quirk: a running `.exe` cannot be overwritten, but
+it *can* be renamed. So the old file is moved aside, the new one takes its
+name, and the replacement is deleted on the next run. If copying the new file
+fails, the old one is moved back — the machine is never left without an agent.
+
+`--setup` carries the update source into the installer, so a second computer
+inherits it. A local path obviously won't resolve on another machine; a network
+share or a URL will.
+
 ## Why HTTPS with a self-signed certificate
 
 Browsers only expose video decoding (WebCodecs), service workers and wake-lock

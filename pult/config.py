@@ -122,6 +122,31 @@ class RemoteSettings:
 
 
 @dataclass
+class UpdateSettings:
+    """O'z-o'zini yangilash.
+
+    Maqsad: yangi versiya chiqqanda hech narsa qilish kerak bo'lmasin.
+    Dastur ishga tushganda manbani tekshiradi va yangisi bo'lsa o'zini
+    almashtirib qayta ishga tushadi.
+
+    "off"    - yangilanmaydi.
+    "folder" - source papkasidagi Pult.exe bilan solishtiradi. Papka
+               mahalliy ham, tarmoqdagi umumiy papka ham bo'lishi
+               mumkin.
+    "url"    - source manzilidan yuklab oladi.
+
+    Solishtirish fayl xesh yig'indisi bo'yicha: raqamli versiya
+    yuritish shart emas, manbadagi fayl boshqacha bo'lsa - o'shanga
+    o'tiladi.
+    """
+    mode: str = "off"
+    source: str = ""
+    # Ishlab turganda ham tekshiradi. Yangilash faqat hech kim
+    # ulanmagan paytda qo'llanadi - oqim o'rtasida uzilmasin.
+    check_minutes: int = 15
+
+
+@dataclass
 class TelegramSettings:
     enabled: bool = False
     bot_token: str = ""
@@ -159,6 +184,7 @@ class Config:
     ffmpeg_path: str | None = None
     stream: StreamSettings = field(default_factory=StreamSettings)
     remote: RemoteSettings = field(default_factory=RemoteSettings)
+    update: UpdateSettings = field(default_factory=UpdateSettings)
     hub: HubSettings = field(default_factory=HubSettings)
     telegram: TelegramSettings = field(default_factory=TelegramSettings)
     security: SecuritySettings = field(default_factory=SecuritySettings)

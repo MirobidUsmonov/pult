@@ -73,6 +73,9 @@ def main() -> int:
                         help="avtomatik ishga tushirishni o'chirish")
     parser.add_argument("--remote", choices=["off", "cloudflare"],
                         help="tashqi kirish: bitta Wi-Fi chegarasidan chiqish")
+    parser.add_argument("--update", metavar="MANBA",
+                        help="o'z-o'zini yangilash manbasi: papka, http(s) "
+                             "havola yoki \"off\"")
     parser.add_argument("--telegram", metavar="TOKEN",
                         help="Telegram xabarnomasini sozlash (@BotFather bergan token)")
     parser.add_argument("--test-notify", action="store_true",
@@ -96,6 +99,26 @@ def main() -> int:
         print(text)
         if getattr(sys, "frozen", False):
             setupmod.message(text)
+        return 0
+
+    if args.update:
+        fresh = cfgmod.load()
+        value = args.update.strip()
+        if value.lower() in ("off", "yo'q", "none"):
+            fresh.update.mode = "off"
+            fresh.update.source = ""
+            print("O'z-o'zini yangilash o'chirildi.")
+        else:
+            fresh.update.mode = "url" if value.lower().startswith("http") else "folder"
+            fresh.update.source = value
+            print(f"Yangilash manbasi: {value}  (rejim: {fresh.update.mode})")
+            print()
+            print("  Dastur har ishga tushganda shu manbani tekshiradi va")
+            print("  fayl boshqacha bo'lsa o'zini almashtirib qayta ishga")
+            print(f"  tushadi. Ishlab turganda ham har "
+                  f"{fresh.update.check_minutes} daqiqada tekshiradi,")
+            print("  lekin faqat hech kim ulanmagan paytda yangilaydi.")
+        cfgmod.save(fresh)
         return 0
 
     if args.remote:
@@ -152,9 +175,18 @@ def main() -> int:
     # boshqa hech narsa kerak emas.
     if getattr(sys, "frozen", False):
         from . import setup as setupmod
+        from . import update as updatemod
 
         if setupmod.first_run():
             return 0
+
+        # Yangi versiya bo'lsa o'zini almashtirib qayta ishga tushadi.
+        # Server ko'tarilishidan oldin: portni band qilib olib, keyin
+        # qayta ishga tushsak yangi nusxa portni ololmay qolardi.
+        if asyncio.run(updatemod.apply_if_any(cfg)):
+            return 0
+        logging.info("versiya: %s; %s",
+                     updatemod.stamp(), updatemod.describe(cfg))
 
     # Odatiy yo'l: trey. pystray bo'lmasa konsolsiz fon rejimida davom
     # etamiz - dastur baribir ishlashi kerak.

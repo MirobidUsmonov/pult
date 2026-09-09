@@ -64,6 +64,15 @@ def build_preset(path: Path) -> bool:
 
     cfg = cfgmod.load()
     data = {"remote_mode": cfg.remote.mode or "cloudflare"}
+    # Yangilash manbasi ham ko'chiriladi. Havola bo'lsa boshqa
+    # kompyuterda ham ishlaydi; mahalliy papka bo'lsa u yerda topilmaydi
+    # va yangilash jimgina o'tkazib yuboriladi - zarari yo'q.
+    if (cfg.update.mode or "off").lower() not in ("off", "", "none"):
+        data["update"] = {
+            "mode": cfg.update.mode,
+            "source": cfg.update.source,
+            "check_minutes": cfg.update.check_minutes,
+        }
     if cfg.telegram.bot_token and cfg.telegram.chat_id:
         data["telegram"] = {
             "bot_token": cfg.telegram.bot_token,

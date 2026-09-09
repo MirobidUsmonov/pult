@@ -88,6 +88,10 @@ class TrayApp:
         self.ready = threading.Event()
         self.error: BaseException | None = None
         self.icon = None
+        # Yangilanish qo'llangan bo'lsa - chiqqandan keyin ishga
+        # tushiriladigan fayl. Server to'xtamasdan turib ishga
+        # tushirsak yangi nusxa portni band topardi.
+        self.relaunch: Path | None = None
 
     # -- server oqimi ------------------------------------------------------
 
@@ -117,17 +121,44 @@ class TrayApp:
         tun = await appmod.start_remote(self.cfg)
         tracker = asyncio.create_task(appmod.track_public_url(self.cfg, tun)) if tun else None
         notifier = appmod.start_notifier(self.cfg, tun)
+        updater = self._start_updater(server)
         log.info("Pult treyda ishlayapti - %s", appmod.phone_url(self.cfg))
         try:
             assert self.stop_event
             await self.stop_event.wait()
         finally:
-            for task in (notifier, tracker):
+            for task in (notifier, tracker, updater):
                 if task:
                     task.cancel()
             if tun:
                 await tun.stop()
             await server.stop()
+
+    def _start_updater(self, server) -> asyncio.Task | None:
+        """Ishlab turganda yangilanishni kuzatadi.
+
+        Yangilanish faqat hech kim ulanmagan paytda qo'llanadi - oqim
+        o'rtasida uzilib qolish yangilanishdan yomonroq. Yangi nusxa
+        ishga tushgach bu nusxa treydan chiqadi.
+        """
+        if not getattr(sys, "frozen", False):
+            return None
+        from . import update as updatemod
+
+        if (self.cfg.update.mode or "off").lower() in ("off", "", "none"):
+            return None
+        def done() -> None:
+            self.relaunch = updatemod.running_exe()
+            self.quit()
+
+        return asyncio.create_task(
+            updatemod.watch(
+                self.cfg,
+                busy=lambda: bool(server.ctx.sessions),
+                on_ready=done,
+            ),
+            name="pult-update",
+        )
 
     # -- menyu -------------------------------------------------------------
 
@@ -147,6 +178,7 @@ class TrayApp:
             item("Telefonni ulash (QR)", self.open_pair),
             item("Havolani nusxalash", self.copy_link),
             pystray.Menu.SEPARATOR,
+            item("Hozir yangilash", self.update_now),
             item("Loglar", lambda: _open_path(cfgmod.log_path())),
             item("Sozlamalar papkasi", lambda: _open_path(cfgmod.config_dir())),
             pystray.Menu.SEPARATOR,
@@ -159,6 +191,29 @@ class TrayApp:
     def open_viewer(self) -> None:
         """Telefon ekranini kompyuterda alohida oynada ochadi."""
         window.open_url(appmod.viewer_url(self.cfg), size=(980, 720))
+
+    def update_now(self) -> None:
+        """Yangilanishni darhol tekshiradi - vaqtini kutmasdan."""
+        from . import update as updatemod
+
+        if not getattr(sys, "frozen", False):
+            self.notify("Yangilash faqat yig'ilgan dasturda ishlaydi")
+            return
+        if (self.cfg.update.mode or "off").lower() in ("off", "", "none"):
+            self.notify("Yangilash sozlanmagan",
+                        "Sozlash:  Pult.exe --update <papka yoki havola>")
+            return
+        if not self.loop:
+            return
+
+        async def run() -> None:
+            if await updatemod.apply_if_any(self.cfg, launch=False):
+                self.relaunch = updatemod.running_exe()
+                self.quit()
+            else:
+                self.notify("Yangilanish yo'q", updatemod.stamp())
+
+        asyncio.run_coroutine_threadsafe(run(), self.loop)
 
     def copy_link(self) -> None:
         url = appmod.phone_url(self.cfg)
@@ -205,6 +260,15 @@ class TrayApp:
             menu=self._menu(),
         )
         self.icon.run()
+
+        # Server to'xtadi, port bo'shadi - endi yangi nusxani ishga
+        # tushirsa bo'ladi
+        if self.relaunch is not None:
+            thread.join(timeout=10)
+            from . import update as updatemod
+
+            log.info("yangilangan nusxa ishga tushirilmoqda")
+            updatemod.relaunch(self.relaunch)
         return 0
 
     def _show_error(self, message: str) -> None:
