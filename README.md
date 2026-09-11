@@ -161,9 +161,10 @@ holding and it becomes a drag.
 ## Dictation
 
 Typing on a phone to drive a computer is the slowest part of using it, so
-the text field has a microphone next to it: hold it, speak, let go. The
-recording goes to your PC, is recognised there, and the words land in the
-field for you to check before they are sent.
+the text field has a microphone next to it: tap it, speak, and it stops on
+its own when you stop talking (or tap again). The recording goes to your
+PC, is recognised there, and the words land in the field for you to check
+before they are sent.
 
 Recognition runs entirely on your own machine — the audio is not uploaded
 anywhere. Pult does not ship a model; it uses one already installed. If you
@@ -186,6 +187,15 @@ so it does not hold several hundred megabytes all day. On a GTX 1650 a
 phrase comes back in about a second, whatever its length.
 
 Without a model the microphone button simply does not appear.
+
+Nothing is installed on the phone for this — the model and the recognition
+both stay on the PC. The phone only records. In the Android app the
+microphone needs Android's own permission, which it asks for the first
+time you tap the button; until the app holds it, the WebView reports no
+microphone at all rather than prompting.
+
+Recognition uses the GPU, so it will not work while a full-screen game
+has it. Rather than hanging, it says so.
 
 ## Install
 

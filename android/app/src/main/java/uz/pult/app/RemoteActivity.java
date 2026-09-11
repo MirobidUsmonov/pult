@@ -118,6 +118,8 @@ public class RemoteActivity extends Activity {
             WebView.setWebContentsDebuggingEnabled(true);
         }
 
+        web.addJavascriptInterface(new Bridge(), "PultNative");
+
         web.setWebChromeClient(new WebChromeClient() {
             /**
              * The page asks for the microphone, for dictation.
@@ -248,7 +250,39 @@ public class RemoteActivity extends Activity {
     // -- microphone ----------------------------------------------------------
 
     private static final int REQ_MIC = 71;
-    private android.webkit.PermissionRequest pendingMic;
+    /**
+     * Static on purpose.
+     *
+     * Android may destroy this activity while the permission dialog is
+     * up and build a new one when it closes. As an ordinary field the
+     * pending request would be lost with it, the page would wait for an
+     * answer that never came, and the microphone would appear broken.
+     * The same trap was already hit on the computer list.
+     */
+    private static android.webkit.PermissionRequest pendingMic;
+
+    /**
+     * A small bridge the page can call.
+     *
+     * The microphone needs Android's permission before the WebView will
+     * admit that a microphone exists at all: without it getUserMedia
+     * does not ask, it simply reports that no device was found, which
+     * reads on the page as a phone with no microphone. So the page asks
+     * for the permission through here first, and only then records.
+     */
+    private class Bridge {
+        @android.webkit.JavascriptInterface
+        public boolean hasMic() {
+            return hasMicPermission();
+        }
+
+        @android.webkit.JavascriptInterface
+        public void requestMic() {
+            runOnUiThread(() -> {
+                if (!hasMicPermission()) askForMic();
+            });
+        }
+    }
 
     private boolean hasMicPermission() {
         return checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
@@ -279,6 +313,11 @@ public class RemoteActivity extends Activity {
         if (!granted) {
             Toast.makeText(this, "Without the microphone there is no dictation",
                     Toast.LENGTH_LONG).show();
+        }
+        // The page is waiting on the answer either way.
+        if (web != null) {
+            web.evaluateJavascript(
+                    "window.__pultMic && window.__pultMic(" + granted + ")", null);
         }
     }
 

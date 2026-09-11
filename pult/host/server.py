@@ -29,6 +29,11 @@ log = logging.getLogger("pult.server")
 # small enough that a recorder left running cannot exhaust memory.
 STT_MAX_BYTES = 4 * 1024 * 1024
 
+# How long recognition may take before the phone is told to stop
+# waiting. A phrase comes back in about a second; a minute means the
+# graphics card has been taken by something else.
+STT_TIMEOUT = 45.0
+
 
 def web_root() -> Path:
     """The web assets folder, found in a built .exe as well."""
@@ -220,6 +225,16 @@ class HostServer:
             return web.json_response(
                 {"ok": False, "msg": "dictation is not set up on this computer"})
 
+        # Recognition runs on the GPU, and a full-screen game owns the
+        # GPU. Asked while one is running, the call does not come back
+        # slowly - it does not come back at all, and the button waits
+        # for ever. Better to say so than to hang.
+        if self.ctx.paused_by:
+            return web.json_response(
+                {"ok": False,
+                 "msg": f"{self.ctx.paused_by} is using the graphics card — "
+                        "dictation will not work until it closes"})
+
         # A cap on the upload: a few seconds of speech is well under a
         # megabyte, and without a limit a stuck recorder could send
         # until memory runs out.
@@ -235,7 +250,22 @@ class HostServer:
             # everyone else while someone dictates.
             samples = await asyncio.to_thread(
                 sttmod.to_samples, audio, self.ctx.caps.path)
-            text = await asyncio.to_thread(self.ctx.recogniser().transcribe, samples)
+            # A backstop on top of the check above. Recognition takes
+            # about a second; anything near a minute means something has
+            # the graphics card and is not giving it back. The worker
+            # cannot be interrupted mid-call, but the phone gets an
+            # answer instead of waiting for ever.
+            text = await asyncio.wait_for(
+                asyncio.to_thread(self.ctx.recogniser().transcribe, samples),
+                timeout=STT_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            log.warning("recognition did not finish in %.0fs - something else "
+                        "is likely using the graphics card", STT_TIMEOUT)
+            return web.json_response(
+                {"ok": False,
+                 "msg": "Recognition took too long — something else is using "
+                        "the graphics card"})
         except Exception as exc:
             log.warning("dictation failed: %s", exc, exc_info=True)
             return web.json_response({"ok": False, "msg": str(exc)})

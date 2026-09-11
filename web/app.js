@@ -1614,11 +1614,13 @@ $("phBtn").onclick = () => startStream();
 
 /* ----------------------------------------------------------- dictation */
 
-/* Hold the microphone, speak, let go.
+/* Tap the microphone, speak, tap again.
  *
- * Hold-to-talk rather than tap-to-start: it needs no second decision
- * about when speech ended, it cannot be left recording by accident, and
- * it matches how a walkie-talkie already works.
+ * Hold-to-talk was tried first and was awkward: holding a button with
+ * one thumb while the same hand steadies the phone leaves nothing to
+ * speak into, and letting go early cuts the sentence. Tapping frees the
+ * hand, and a pause in speech ends it anyway - so most of the time
+ * there is no second tap either.
  *
  * The recording goes to the computer, which recognises it locally and
  * sends the words back. They land in the text field rather than being
@@ -1629,24 +1631,86 @@ const mic = $("btnMic");
 let recorder = null;
 let chunks = [];
 let micBusy = false;
+let micStop = null;
+
+/* Speech stops for a moment all the time, so silence only ends the
+ * recording after it has lasted longer than a pause between words. */
+const QUIET_END_MS = 1600;
+const MAX_RECORD_MS = 60000;
 
 function micSupported() {
   return !!(navigator.mediaDevices && window.MediaRecorder);
 }
 
+/* Sends a line to the computer's log.
+ *
+ * Reading a phone's own log needs a cable and developer mode, so when
+ * something here fails the reason would otherwise be lost. This is the
+ * same channel the Android app uses to explain why sharing stopped. */
+function note(text) {
+  try { link.send({ t: "note", msg: String(text).slice(0, 300) }); } catch (e) {}
+}
+
+/* Gets Android's permission before the page asks for the microphone.
+ *
+ * Inside the app this matters more than it looks: until the app itself
+ * holds RECORD_AUDIO, the WebView does not report a microphone at all -
+ * getUserMedia does not prompt, it reports that no device was found,
+ * which reads on screen as a phone without a microphone. In a plain
+ * browser there is no bridge and the browser handles its own prompt. */
+async function micPermission() {
+  const native = window.PultNative;
+  if (!native || !native.hasMic) return true;
+  if (native.hasMic()) return true;
+
+  return new Promise((resolve) => {
+    let done = false;
+    window.__pultMic = (granted) => {
+      if (done) return;
+      done = true;
+      resolve(!!granted);
+    };
+    native.requestMic();
+    // If the dialog is dismissed in a way that never reports back, do
+    // not leave the button dead for the rest of the session.
+    setTimeout(() => { if (!done) { done = true; resolve(native.hasMic()); } }, 60000);
+  });
+}
+
 async function micStart() {
   if (recorder || micBusy || !micSupported()) return;
+
+  if (!await micPermission()) {
+    toast("Without the microphone there is no dictation");
+    return;
+  }
+
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
     });
   } catch (e) {
-    toast(e && e.name === "NotAllowedError"
-      ? "Microphone access was refused"
-      : "No microphone found");
+    /* The reason matters, and guessing at it has already cost time.
+     * Chrome refuses the microphone outright on a page whose
+     * certificate did not verify - which is every local connection
+     * here, since the agent signs its own. That arrives as a bare
+     * NotFoundError, indistinguishable from a phone with no microphone
+     * unless the page says which it was. */
+    const name = (e && e.name) || "Error";
+    note(`microphone refused: ${name} (secure=${window.isSecureContext}, ` +
+         `origin=${location.origin})`);
+    if (name === "NotAllowedError") {
+      toast("Microphone access was refused — allow it for Pult");
+    } else if (!window.isSecureContext) {
+      toast("This connection is not trusted, so the browser blocks the " +
+            "microphone. Use the internet link.");
+    } else {
+      toast(`No microphone (${name})`);
+    }
     return;
   }
+
   chunks = [];
   // Speech carries fine at this bitrate, and the upload matters: over a
   // tunnel the recording has to cross the internet before a single word
@@ -1667,6 +1731,18 @@ async function micStart() {
   recorder.start();
   mic.classList.add("on");
   navigator.vibrate?.(12);
+  toast("Listening — tap again when you are done");
+
+  const stopAll = listenForSilence(stream);
+  const hardStop = setTimeout(() => micStop && micStop(), MAX_RECORD_MS);
+
+  micStop = () => {
+    micStop = null;
+    clearTimeout(hardStop);
+    stopAll();
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+    mic.classList.remove("on");
+  };
 
   async function send(blob) {
     // Under a moment of audio is a mis-tap, not speech.
@@ -1680,6 +1756,7 @@ async function micStart() {
       const d = await r.json();
       if (!d.ok) {
         toast(d.msg || "Could not recognise that");
+        note(`dictation failed: ${d.msg || "?"}`);
       } else if (!d.text) {
         toast("Nothing was heard");
       } else {
@@ -1691,28 +1768,67 @@ async function micStart() {
       }
     } catch (e) {
       toast("The computer did not answer");
+      note(`dictation upload failed: ${e}`);
     }
     mic.classList.remove("busy");
     micBusy = false;
   }
 }
 
-function micStop() {
-  if (recorder && recorder.state !== "inactive") recorder.stop();
-  mic.classList.remove("on");
+/* Ends the recording once speech has stopped for long enough.
+ *
+ * Without this every dictation needs a second tap, and the one thing
+ * worse than holding a button is remembering to press it again. A pause
+ * between words is far shorter than the wait here, so a sentence is not
+ * cut in half.
+ */
+function listenForSilence(stream) {
+  let ctx, timer;
+  try {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    src.connect(analyser);
+    const buf = new Uint8Array(analyser.fftSize);
+    let quietSince = 0;
+    let spokeAtAll = false;
+
+    timer = setInterval(() => {
+      analyser.getByteTimeDomainData(buf);
+      let peak = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const v = Math.abs(buf[i] - 128);
+        if (v > peak) peak = v;
+      }
+      const loud = peak > 6;
+      if (loud) { spokeAtAll = true; quietSince = 0; return; }
+      // Only start the clock once something has actually been said, so
+      // a slow start does not end the recording before it begins.
+      if (!spokeAtAll) return;
+      const now = Date.now();
+      if (!quietSince) quietSince = now;
+      else if (now - quietSince > QUIET_END_MS && micStop) micStop();
+    }, 150);
+  } catch (e) {
+    // Without an analyser it simply needs the second tap.
+    note(`silence detection unavailable: ${e}`);
+  }
+
+  return () => {
+    clearInterval(timer);
+    try { ctx && ctx.close(); } catch (e) {}
+  };
 }
 
 if (mic) {
-  mic.addEventListener("pointerdown", (e) => {
+  mic.addEventListener("click", (e) => {
     e.preventDefault();
-    // Keeps the events coming even if the finger slides off the button.
-    mic.setPointerCapture?.(e.pointerId);
-    micStart();
+    if (micStop) micStop();
+    else micStart();
   });
-  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) {
-    mic.addEventListener(ev, (e) => { e.preventDefault(); micStop(); });
-  }
-  // A held button otherwise raises the system's own long-press menu.
+  // A tap that lands on a button should not also reach the screen
+  // behind it, and a held button raises the system's own menu.
   mic.addEventListener("contextmenu", (e) => e.preventDefault());
 }
 

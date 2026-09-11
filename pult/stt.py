@@ -44,6 +44,11 @@ SILENCE_PEAK = 0.012
 # text lands in a field the user can still edit.
 NO_SPEECH_LIMIT = 0.7
 
+# How long to wait for a previous recognition to finish before giving up
+# on it. Long enough for a slow one, short enough that a stuck one does
+# not make the button look dead.
+LOCK_WAIT = 20.0
+
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 # Offsets into whisper_full_params.
@@ -267,7 +272,14 @@ class Recogniser:
             log.info("the recording is silent, not recognising it")
             return ""
 
-        with self._lock:
+        # Not a plain "with": a call that never returns - which is what
+        # happens when something else has taken the graphics card - would
+        # otherwise hold this lock for good, and every later attempt
+        # would queue behind it even once the machine was free again.
+        if not self._lock.acquire(timeout=LOCK_WAIT):
+            raise RuntimeError("recognition is still busy with the previous "
+                               "recording")
+        try:
             self._load()
             lib, ctx = self._lib, self._ctx
 
@@ -323,6 +335,8 @@ class Recogniser:
 
             self._last_used = time.monotonic()
             return text
+        finally:
+            self._lock.release()
 
 
 _LOG_CB = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
