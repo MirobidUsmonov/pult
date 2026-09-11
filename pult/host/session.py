@@ -483,6 +483,7 @@ class HostContext:
         self._stats_task: asyncio.Task | None = None
         self._cross_since = 0.0
         self._switched_at = 0.0
+        self._follow_task: asyncio.Task | None = None
 
         # Built on first use: loading the speech model costs both time
         # and several hundred megabytes, and most sessions never dictate.
@@ -649,6 +650,13 @@ class HostContext:
 
         if not self._cross_since:
             self._cross_since = now
+            # This runs on mouse messages, so with the finger lifted
+            # there is nothing left to notice that the dwell has passed -
+            # crossing over and stopping followed nothing at all. One
+            # delayed look settles it, and only while a crossing is
+            # actually pending: polling in the background would make the
+            # view chase the computer's own mouse as well.
+            self._schedule_follow()
             return
         if now - self._cross_since < SWITCH_DWELL:
             return
@@ -658,6 +666,21 @@ class HostContext:
         self.cfg.stream.monitor = idx
         log.info("cursor moved to screen %d, the view followed", idx + 1)
         await self.sync_capture(changed=True)
+
+    def _schedule_follow(self) -> None:
+        """Looks again once the dwell has had time to pass."""
+        if self._follow_task and not self._follow_task.done():
+            return
+
+        async def later() -> None:
+            await asyncio.sleep(SWITCH_DWELL + 0.1)
+            try:
+                if self.cfg.stream.follow_cursor and self.viewers_of("local"):
+                    await self.follow_cursor()
+            except Exception:
+                log.debug("following the cursor failed", exc_info=True)
+
+        self._follow_task = asyncio.create_task(later(), name="pult-follow")
 
     def monitor_bounds(self) -> tuple[int, int, int, int]:
         m = self.monitor()
@@ -881,17 +904,6 @@ class HostContext:
                 if not self.sessions:
                     continue
 
-                # The view follows the cursor from here as well as from
-                # the mouse messages themselves. Checking only on those
-                # meant that crossing to the other screen and stopping
-                # never switched anything: the dwell has to elapse, and
-                # with the mouse at rest nothing was left to notice that
-                # it had.
-                if self.cfg.stream.follow_cursor and self.viewers_of("local"):
-                    try:
-                        await self.follow_cursor()
-                    except Exception:
-                        log.debug("following the cursor failed", exc_info=True)
                 msg = {
                     "t": "stats",
                     "fps": round(self.capture.stats.fps, 1),

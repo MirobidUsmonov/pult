@@ -31,6 +31,16 @@ log = logging.getLogger("pult.tunnel")
 # cloudflared prints the quick-tunnel address in this shape
 URL_RE = re.compile(rb"https://[a-z0-9][a-z0-9-]*\.trycloudflare\.com")
 
+# Hostnames on that domain which are not tunnels.
+#
+# cloudflared mentions its own API endpoint in the same log stream it
+# announces the tunnel on, and the pattern above matches it just as
+# happily. Taken as the public address it does real damage: the phone
+# stores it as a way to reach this computer, and every later attempt
+# loads Cloudflare's API instead of Pult - a blank page with a broken
+# image on it, and no hint of why.
+NOT_TUNNELS = {"api", "www"}
+
 RELEASE = "https://github.com/cloudflare/cloudflared/releases/latest/download"
 
 # No console window may appear: the program runs in the background
@@ -151,11 +161,15 @@ async def download(config_dir: Path) -> Path | None:
 class Tunnel:
     """A running tunnel. Rebuilds itself when it drops."""
 
-    def __init__(self, config_dir: Path, hint: str, local_url: str) -> None:
+    def __init__(self, config_dir: Path, hint: str, local_url: str,
+                 host_id: str = "") -> None:
         self.config_dir = config_dir
         self.hint = hint
         self.binary: Path | None = None
         self.local_url = local_url
+        # Used to confirm that a candidate address really reaches us
+        # before it is handed out. Empty skips the check.
+        self.host_id = host_id
         self.url: str = ""
         self.ready = asyncio.Event()
         self._proc: subprocess.Popen | None = None
@@ -199,6 +213,63 @@ class Tunnel:
         self.binary = found
         return found
 
+    async def _audit(self, url: str) -> None:
+        """Withdraws an address that turns out to belong to someone else.
+
+        Reading the tunnel address out of a log stream is guesswork, and
+        a wrong guess is expensive: it goes to the phone, is stored
+        there, and is tried on every later connection, giving a page
+        that is not Pult and an error nobody can interpret. That is
+        exactly what happened when cloudflared's own API endpoint was
+        mistaken for the tunnel.
+
+        /api/info answers without a key and names the computer, which is
+        what tells our tunnel from anything else that replies.
+
+        The rule is deliberately one-sided. Only a clear answer from the
+        wrong computer withdraws the address; being unreachable never
+        does, because that is also what a tunnel looks like in its first
+        minutes, and dropping a good address costs more than keeping a
+        doubtful one.
+        """
+        if not self.host_id:
+            return
+
+        import aiohttp
+
+        for _ in range(10):
+            await asyncio.sleep(6)
+            if self.url != url:
+                return
+            try:
+                timeout = aiohttp.ClientTimeout(total=10)
+                async with aiohttp.ClientSession(timeout=timeout) as sess:
+                    async with sess.get(f"{url}/api/info") as r:
+                        if r.status != 200:
+                            continue
+                        data = await r.json()
+            except Exception:
+                # Not reachable yet, or not reachable from here. Says
+                # nothing about whose address it is.
+                continue
+
+            if data.get("id") == self.host_id:
+                log.info("tunnel address confirmed: %s", url)
+                return
+            log.warning("%s answers as a different computer - withdrawing it",
+                        url)
+            if self.url == url:
+                self.url = ""
+                self.ready.clear()
+            return
+
+    def _accept(self, url: str) -> None:
+        if self.url:
+            return
+        self.url = url
+        self.ready.set()
+        log.info("public address: %s", url)
+
     async def _once(self) -> None:
         binary = await self._ensure_binary()
         cmd = [
@@ -218,15 +289,36 @@ class Tunnel:
         )
         self._proc = proc
         log.info("cloudflared started (pid %s)", proc.pid)
+        tried: set[str] = set()
+        checks: list[asyncio.Task] = []
         try:
             assert proc.stderr
             async for line in proc.stderr:
                 m = URL_RE.search(line)
-                if m and not self.url:
-                    self.url = m.group(0).decode("ascii")
-                    self.ready.set()
-                    log.info("public address: %s", self.url)
+                if not m or self.url:
+                    continue
+                found = m.group(0).decode("ascii")
+                label = found.split("//", 1)[1].split(".", 1)[0]
+                if label in NOT_TUNNELS:
+                    log.debug("ignoring %s - not a tunnel address", found)
+                    continue
+                if found in tried:
+                    continue
+                tried.add(found)
+                # Published straight away, then watched.
+                #
+                # Holding it back until it could be reached was tried and
+                # was worse: a quick tunnel's name can take minutes to
+                # resolve, so a perfectly good address was thrown away
+                # and remote access went dead - a heavier failure than
+                # the one being guarded against. Being unreachable for a
+                # moment is what a new tunnel looks like; it is not
+                # evidence of a wrong address.
+                self._accept(found)
+                checks.append(asyncio.create_task(self._audit(found)))
         finally:
+            for t in checks:
+                t.cancel()
             if proc.returncode is None:
                 proc.terminate()
                 try:
@@ -269,6 +361,7 @@ async def create(cfg, config_dir: Path) -> Tunnel | None:
         return None
 
     scheme = "http" if cfg.tls == "off" else "https"
-    tunnel = Tunnel(config_dir, cfg.remote.binary, f"{scheme}://127.0.0.1:{cfg.port}")
+    tunnel = Tunnel(config_dir, cfg.remote.binary,
+                    f"{scheme}://127.0.0.1:{cfg.port}", cfg.host_id)
     tunnel.start()
     return tunnel

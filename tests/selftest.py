@@ -148,6 +148,40 @@ def test_environment() -> ff.Capabilities | None:
 # ------------------------------------------------------ 2. screens, input
 
 
+def test_tunnel_parsing() -> None:
+    """The tunnel address is read out of cloudflared's log stream.
+
+    cloudflared names its own API endpoint in that same stream, and
+    mistaking it for the tunnel is expensive: the wrong address goes to
+    the phone, is stored there, and every later connection loads
+    Cloudflare's API instead of Pult - a blank page with a broken image
+    and no hint of why. It happened, hence these checks.
+    """
+    section("2b. Tunnel address")
+    from pult.tunnel import NOT_TUNNELS, URL_RE
+
+    def read(line: bytes) -> str | None:
+        m = URL_RE.search(line)
+        if not m:
+            return None
+        found = m.group(0).decode()
+        label = found.split("//", 1)[1].split(".", 1)[0]
+        return None if label in NOT_TUNNELS else found
+
+    real = b'2026-09-11T09:09:32Z INF |  https://slide-comparing-sox-labeled.trycloudflare.com  |'
+    check("a real tunnel address is taken",
+          read(real) == "https://slide-comparing-sox-labeled.trycloudflare.com",
+          str(read(real)))
+
+    api = (b'2026-09-11T09:05:37Z ERR Failed to request quick Tunnel '
+           b'error="Post \\"https://api.trycloudflare.com/tunnel\\": timeout"')
+    check("cloudflared's own API is not mistaken for one", read(api) is None,
+          str(read(api)))
+
+    plain = b"2026-09-11T09:05:36Z INF Requesting new quick Tunnel on trycloudflare.com..."
+    check("a line with no address yields none", read(plain) is None, str(read(plain)))
+
+
 def test_input() -> list[dict]:
     section("2. Screens and input")
     try:
@@ -673,6 +707,8 @@ async def main() -> int:
     if caps is None:
         print("\nThere is no going on without ffmpeg.")
         return 2
+
+    test_tunnel_parsing()
 
     mons = test_input()
     if mons:
