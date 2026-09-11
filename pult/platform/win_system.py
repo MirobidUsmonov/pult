@@ -96,6 +96,64 @@ def foreground_window_title() -> str:
     return buf.value
 
 
+class _ENTRY(ctypes.Structure):
+    """PROCESSENTRY32W - only the fields up to the name are needed."""
+    _fields_ = [
+        ("dwSize", ctypes.c_ulong),
+        ("cntUsage", ctypes.c_ulong),
+        ("th32ProcessID", ctypes.c_ulong),
+        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+        ("th32ModuleID", ctypes.c_ulong),
+        ("cntThreads", ctypes.c_ulong),
+        ("th32ParentProcessID", ctypes.c_ulong),
+        ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", ctypes.c_ulong),
+        ("szExeFile", ctypes.c_wchar * 260),
+    ]
+
+
+def first_running(names: list[str]) -> str:
+    """The first of these executables that is running, or "".
+
+    A plain snapshot of the process table rather than WMI or an extra
+    package: this is asked every few seconds while someone is watching,
+    and WMI would cost far more than the question is worth.
+
+    Only the executable name is compared, so nothing here depends on
+    where a program was installed.
+    """
+    if not names:
+        return ""
+    wanted = {n.strip().lower() for n in names if n and n.strip()}
+    if not wanted:
+        return ""
+
+    TH32CS_SNAPPROCESS = 0x00000002
+    INVALID = ctypes.c_void_p(-1).value
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    kernel32.Process32FirstW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_ENTRY)]
+    kernel32.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_ENTRY)]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+
+    snap = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not snap or snap == INVALID:
+        return ""
+    try:
+        entry = _ENTRY()
+        entry.dwSize = ctypes.sizeof(_ENTRY)
+        if not kernel32.Process32FirstW(snap, ctypes.byref(entry)):
+            return ""
+        while True:
+            if entry.szExeFile.lower() in wanted:
+                return entry.szExeFile
+            if not kernel32.Process32NextW(snap, ctypes.byref(entry)):
+                return ""
+    finally:
+        kernel32.CloseHandle(snap)
+
+
 COMMANDS = {
     "lock": lock,
     "sleep": sleep,

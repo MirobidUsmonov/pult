@@ -45,6 +45,11 @@ HDR = struct.Struct("!BBHI")
 PASS, FAIL, SKIP = "OK  ", "FAIL", "----"
 results: list[tuple[str, str, str]] = []
 
+# Whether the cursor can be driven at all. A full-screen game holds the
+# mouse for itself, and then every pointer check measures the game
+# rather than Pult - which is worth skipping, not failing.
+CURSOR_OK = True
+
 
 def check(name: str, ok: bool | None, detail: str = "") -> bool:
     tag = SKIP if ok is None else (PASS if ok else FAIL)
@@ -107,6 +112,65 @@ def measure_pointer(wi, targets, send, tries: int = 3) -> tuple[int, bool]:
             interference = True
         worst = max(worst, best if best is not None else 10**6)
     return worst, interference
+
+
+def cursor_controllable(wi) -> bool:
+    """Whether moving the cursor actually moves it.
+
+    A game with the mouse captured swallows the movement, and so does
+    anything else holding raw input. The pointer checks cannot say
+    anything useful then.
+    """
+    mons = wi.list_monitors()
+    if not mons:
+        return False
+    m = mons[0]
+    target = (m["x"] + m["w"] // 2, m["y"] + m["h"] // 2)
+    for _ in range(3):
+        wi.move_to(*target)
+        time.sleep(0.15)
+        gx, gy = wi.cursor_pos()
+        if abs(gx - target[0]) <= 3 and abs(gy - target[1]) <= 3:
+            return True
+    return False
+
+
+def _busy_program() -> str:
+    """A full-screen program that would make these results meaningless.
+
+    Judged by the foreground window covering a whole screen rather than
+    by a list of names, so it holds for any game rather than the ones
+    somebody remembered to write down.
+    """
+    if sys.platform != "win32":
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return ""
+
+        rect = wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+
+        from pult.platform import input_backend
+
+        for m in input_backend().list_monitors():
+            covers = (rect.left <= m["x"] + 1 and rect.top <= m["y"] + 1
+                      and rect.right >= m["x"] + m["w"] - 1
+                      and rect.bottom >= m["y"] + m["h"] - 1)
+            if not covers:
+                continue
+            length = user32.GetWindowTextLengthW(hwnd)
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            return buf.value or "a full-screen program"
+    except Exception:
+        pass
+    return ""
 
 
 def free_port() -> int:
@@ -198,12 +262,29 @@ def test_input() -> list[dict]:
     if not mons:
         return []
 
+    global CURSOR_OK
+    CURSOR_OK = cursor_controllable(wi)
+    if not CURSOR_OK:
+        check("the cursor can be driven", None,
+              "something is holding the mouse (a full-screen game?) - "
+              "the pointer checks are skipped")
+
     saved = wi.cursor_pos()
     targets = [
         (m["x"] + int(fx * (m["w"] - 1)), m["y"] + int(fy * (m["h"] - 1)))
         for m in mons
         for fx, fy in ((0.5, 0.5), (0.0, 0.0), (0.99, 0.99))
     ]
+    if not CURSOR_OK:
+        check("pointer accuracy", None, "the cursor is not ours to drive")
+        check("relative movement", None, "the cursor is not ours to drive")
+        bad = [k for k in ("ctrl", "shift", "Escape", "F5", "ArrowUp", "a", "7",
+                           "AudioVolumeUp", "NumpadEnter")
+               if not _key_ok(wi, k)]
+        check("key map", not bad,
+              "all resolved" if not bad else f"not resolved: {bad}")
+        return mons
+
     worst, noisy = measure_pointer(wi, targets, wi.move_to)
     if worst > 2 and noisy:
         check("pointer accuracy", None, "could not measure - the mouse is in use")
@@ -346,155 +427,170 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                 check("the setting was applied", bool(stream and stream["w"] == 854),
                       f"asked for 854, got {stream['w'] if stream else '?'}")
 
-                # -- input through the protocol
-                from pult.platform import input_backend
+                # Everything below drives the cursor, so it only means
+                # anything while the cursor is ours to drive. A
+                # full-screen game holds the mouse for itself, and it
+                # takes and releases it as focus moves - so this is
+                # asked again here rather than trusted from earlier.
+                from pult.platform import input_backend as _ib
 
-                wi = input_backend()
-                saved = wi.cursor_pos()
-                mon = mons[0]
-                targets = [
-                    (mon["x"] + round(nx * (mon["w"] - 1)), mon["y"] + round(ny * (mon["h"] - 1)))
-                    for nx, ny in ((0.5, 0.5), (0.0, 0.0), (1.0, 1.0), (0.3, 0.7))
-                ]
-                latency: list[float] = []
-
-                def send_via_protocol(tx: int, ty: int) -> None:
-                    # Sending asynchronously from a synchronous function,
-                    # so that both tests share the same measuring logic.
-                    nx = (tx - mon["x"]) / (mon["w"] - 1)
-                    ny = (ty - mon["y"]) / (mon["h"] - 1)
-                    t0 = time.monotonic()
-                    fut = asyncio.run_coroutine_threadsafe(
-                        ws.send_json({"t": "mouse", "a": "move", "x": nx, "y": ny}), loop
-                    )
-                    fut.result(timeout=3)
-                    latency.append((time.monotonic() - t0) * 1000)
-
-                loop = asyncio.get_running_loop()
-                worst, noisy = await asyncio.to_thread(
-                    measure_pointer, wi, targets, send_via_protocol
-                )
-                detail = f"error {worst} px"
-                if latency:
-                    detail += f", send {sum(latency) / len(latency):.0f} ms"
-                if worst > 2 and noisy:
+                if not (CURSOR_OK and cursor_controllable(_ib())):
                     check("mouse through the protocol", None,
-                          "could not measure - the mouse is in use")
+                          "the cursor is not ours to drive")
+                    check("multi-screen behaviour", None,
+                          "the cursor is not ours to drive")
+                    check("slow movement is not lost", None,
+                          "the cursor is not ours to drive")
                 else:
-                    check("mouse through the protocol", worst <= 2, detail)
-                wi.move_to(*saved)
+                    # -- input through the protocol
+                    from pult.platform import input_backend
 
-                # -- multi-screen behaviour
-                if len(mons) >= 2:
-                    a, b = mons[0], mons[1]
+                    wi = input_backend()
+                    saved = wi.cursor_pos()
+                    mon = mons[0]
+                    targets = [
+                        (mon["x"] + round(nx * (mon["w"] - 1)), mon["y"] + round(ny * (mon["h"] - 1)))
+                        for nx, ny in ((0.5, 0.5), (0.0, 0.0), (1.0, 1.0), (0.3, 0.7))
+                    ]
+                    latency: list[float] = []
 
-                    # -- let the cursor cross screens: the view follows
-                    await ws.send_json({"t": "view", "on": True,
-                                        "monitor": a["index"], "follow": True})
-                    await asyncio.sleep(0.5)
-                    # Start from the edge NEAR the neighbouring screen
-                    toward = 1 if b["x"] > a["x"] else -1
-                    start_x = a["x"] + a["w"] - 5 if toward > 0 else a["x"] + 5
-                    wi.move_to(start_x, a["y"] + a["h"] // 2)
-                    await asyncio.sleep(0.1)
-                    for _ in range(14):
-                        await ws.send_json({"t": "mouse", "a": "moveby",
-                                            "dx": 60 * toward, "dy": 0})
-                        await asyncio.sleep(0.07)
-                    await asyncio.sleep(1.2)
-                    gx, gy = wi.cursor_pos()
-                    crossed = (b["x"] <= gx < b["x"] + b["w"])
-                    followed = server.ctx.cfg.stream.monitor == b["index"]
-                    check("the cursor can cross to the second screen", crossed,
-                          f"cursor ({gx},{gy})")
-                    check("the view followed the cursor", followed,
-                          f"the server is showing screen {server.ctx.cfg.stream.monitor + 1}")
+                    def send_via_protocol(tx: int, ty: int) -> None:
+                        # Sending asynchronously from a synchronous function,
+                        # so that both tests share the same measuring logic.
+                        nx = (tx - mon["x"]) / (mon["w"] - 1)
+                        ny = (ty - mon["y"]) / (mon["h"] - 1)
+                        t0 = time.monotonic()
+                        fut = asyncio.run_coroutine_threadsafe(
+                            ws.send_json({"t": "mouse", "a": "move", "x": nx, "y": ny}), loop
+                        )
+                        fut.result(timeout=3)
+                        latency.append((time.monotonic() - t0) * 1000)
 
-                    # -- now the clamped mode
-                    await ws.send_json({"t": "view", "on": True,
-                                        "monitor": a["index"], "follow": False})
-                    await asyncio.sleep(0.5)
+                    loop = asyncio.get_running_loop()
+                    worst, noisy = await asyncio.to_thread(
+                        measure_pointer, wi, targets, send_via_protocol
+                    )
+                    detail = f"error {worst} px"
+                    if latency:
+                        detail += f", send {sum(latency) / len(latency):.0f} ms"
+                    if worst > 2 and noisy:
+                        check("mouse through the protocol", None,
+                              "could not measure - the mouse is in use")
+                    else:
+                        check("mouse through the protocol", worst <= 2, detail)
+                    wi.move_to(*saved)
 
-                    # Deliberately put the cursor on the OTHER screen and
-                    # send a tiny movement: it should come back to the
-                    # watched screen without jumping to the edge
-                    wi.move_to(b["x"] + b["w"] // 2, b["y"] + b["h"] // 2)
-                    await asyncio.sleep(0.1)
-                    await ws.send_json({"t": "mouse", "a": "moveby", "dx": 3, "dy": 0})
-                    await asyncio.sleep(0.35)
-                    gx, gy = wi.cursor_pos()
-                    inside = (a["x"] <= gx < a["x"] + a["w"]) and (a["y"] <= gy < a["y"] + a["h"])
-                    centered = abs(gx - (a["x"] + a["w"] // 2)) < 40
-                    check("a cursor left on another screen is brought back",
-                          inside and centered,
-                          f"cursor ({gx},{gy}), did not jump to the edge" if centered
-                          else f"cursor ({gx},{gy}) - jumped to the edge")
+                    # -- multi-screen behaviour
+                    if len(mons) >= 2:
+                        a, b = mons[0], mons[1]
 
-                    # A large movement must not push it off the screen either
-                    for _ in range(6):
-                        await ws.send_json({"t": "mouse", "a": "moveby", "dx": 900, "dy": 900})
-                        await asyncio.sleep(0.06)
-                    gx, gy = wi.cursor_pos()
-                    inside = (a["x"] <= gx < a["x"] + a["w"]) and (a["y"] <= gy < a["y"] + a["h"])
-                    check("the trackpad stays on the watched screen", inside,
-                          f"cursor ({gx},{gy}), screen {a['index'] + 1} "
-                          f"x:{a['x']}..{a['x'] + a['w']}")
-
-                    # Switching screens should move the cursor there
-                    await ws.send_json({"t": "view", "on": True, "monitor": b["index"]})
-                    await asyncio.sleep(0.6)
-                    gx, gy = wi.cursor_pos()
-                    moved = (b["x"] <= gx < b["x"] + b["w"]) and (b["y"] <= gy < b["y"] + b["h"])
-                    check("switching screens moves the cursor", moved, f"cursor ({gx},{gy})")
-                    await ws.send_json({"t": "view", "on": True, "monitor": a["index"]})
-                    await asyncio.sleep(0.5)
-
-                    # -- the boundary must not be able to thrash
-                    #
-                    # Following the cursor once restarted capture on
-                    # every crossing: a cursor resting near the seam
-                    # rebuilt ffmpeg and the encoder dozens of times a
-                    # minute, which stuttered everything else on the
-                    # machine. A crossing now has to be deliberate, and
-                    # there is a pause before the next one.
-                    await ws.send_json({"t": "view", "on": True,
-                                        "monitor": a["index"], "follow": True})
-                    await asyncio.sleep(0.6)
-                    switches = 0
-                    seen = server.ctx.cfg.stream.monitor
-                    mid_a = (a["x"] + a["w"] // 2, a["y"] + a["h"] // 2)
-                    mid_b = (b["x"] + b["w"] // 2, b["y"] + b["h"] // 2)
-                    started = time.monotonic()
-                    while time.monotonic() - started < 6.0:
-                        # Hop straight between the middles of the two
-                        # screens - the worst case the old code had.
-                        for target in (mid_b, mid_a):
-                            wi.move_to(*target)
+                        # -- let the cursor cross screens: the view follows
+                        await ws.send_json({"t": "view", "on": True,
+                                            "monitor": a["index"], "follow": True})
+                        await asyncio.sleep(0.5)
+                        # Start from the edge NEAR the neighbouring screen
+                        toward = 1 if b["x"] > a["x"] else -1
+                        start_x = a["x"] + a["w"] - 5 if toward > 0 else a["x"] + 5
+                        wi.move_to(start_x, a["y"] + a["h"] // 2)
+                        await asyncio.sleep(0.1)
+                        for _ in range(14):
                             await ws.send_json({"t": "mouse", "a": "moveby",
-                                                "dx": 1, "dy": 0})
-                            await asyncio.sleep(0.25)
-                            if server.ctx.cfg.stream.monitor != seen:
-                                seen = server.ctx.cfg.stream.monitor
-                                switches += 1
-                    check("the screen boundary does not thrash", switches <= 3,
-                          f"{switches} switches in 6s of crossing back and forth")
-                    await ws.send_json({"t": "view", "on": True,
-                                        "monitor": a["index"], "follow": False})
-                    await asyncio.sleep(0.4)
-                else:
-                    check("multi-screen behaviour", None, "no second screen")
+                                                "dx": 60 * toward, "dy": 0})
+                            await asyncio.sleep(0.07)
+                        await asyncio.sleep(1.2)
+                        gx, gy = wi.cursor_pos()
+                        crossed = (b["x"] <= gx < b["x"] + b["w"])
+                        followed = server.ctx.cfg.stream.monitor == b["index"]
+                        check("the cursor can cross to the second screen", crossed,
+                              f"cursor ({gx},{gy})")
+                        check("the view followed the cursor", followed,
+                              f"the server is showing screen {server.ctx.cfg.stream.monitor + 1}")
 
-                # -- very small movements must not get lost
-                wi.move_to(mons[0]["x"] + 600, mons[0]["y"] + 400)
-                await asyncio.sleep(0.15)
-                bx, by = wi.cursor_pos()
-                for _ in range(20):
-                    await ws.send_json({"t": "mouse", "a": "moveby", "dx": 0.3, "dy": 0})
-                    await asyncio.sleep(0.03)
-                await asyncio.sleep(0.2)
-                ax, _ay = wi.cursor_pos()
-                check("slow movement is not lost", abs((ax - bx) - 6) <= 2,
-                      f"expected 20 x 0.3px = 6px, got {ax - bx}px")
+                        # -- now the clamped mode
+                        await ws.send_json({"t": "view", "on": True,
+                                            "monitor": a["index"], "follow": False})
+                        await asyncio.sleep(0.5)
+
+                        # Deliberately put the cursor on the OTHER screen and
+                        # send a tiny movement: it should come back to the
+                        # watched screen without jumping to the edge
+                        wi.move_to(b["x"] + b["w"] // 2, b["y"] + b["h"] // 2)
+                        await asyncio.sleep(0.1)
+                        await ws.send_json({"t": "mouse", "a": "moveby", "dx": 3, "dy": 0})
+                        await asyncio.sleep(0.35)
+                        gx, gy = wi.cursor_pos()
+                        inside = (a["x"] <= gx < a["x"] + a["w"]) and (a["y"] <= gy < a["y"] + a["h"])
+                        centered = abs(gx - (a["x"] + a["w"] // 2)) < 40
+                        check("a cursor left on another screen is brought back",
+                              inside and centered,
+                              f"cursor ({gx},{gy}), did not jump to the edge" if centered
+                              else f"cursor ({gx},{gy}) - jumped to the edge")
+
+                        # A large movement must not push it off the screen either
+                        for _ in range(6):
+                            await ws.send_json({"t": "mouse", "a": "moveby", "dx": 900, "dy": 900})
+                            await asyncio.sleep(0.06)
+                        gx, gy = wi.cursor_pos()
+                        inside = (a["x"] <= gx < a["x"] + a["w"]) and (a["y"] <= gy < a["y"] + a["h"])
+                        check("the trackpad stays on the watched screen", inside,
+                              f"cursor ({gx},{gy}), screen {a['index'] + 1} "
+                              f"x:{a['x']}..{a['x'] + a['w']}")
+
+                        # Switching screens should move the cursor there
+                        await ws.send_json({"t": "view", "on": True, "monitor": b["index"]})
+                        await asyncio.sleep(0.6)
+                        gx, gy = wi.cursor_pos()
+                        moved = (b["x"] <= gx < b["x"] + b["w"]) and (b["y"] <= gy < b["y"] + b["h"])
+                        check("switching screens moves the cursor", moved, f"cursor ({gx},{gy})")
+                        await ws.send_json({"t": "view", "on": True, "monitor": a["index"]})
+                        await asyncio.sleep(0.5)
+
+                        # -- the boundary must not be able to thrash
+                        #
+                        # Following the cursor once restarted capture on
+                        # every crossing: a cursor resting near the seam
+                        # rebuilt ffmpeg and the encoder dozens of times a
+                        # minute, which stuttered everything else on the
+                        # machine. A crossing now has to be deliberate, and
+                        # there is a pause before the next one.
+                        await ws.send_json({"t": "view", "on": True,
+                                            "monitor": a["index"], "follow": True})
+                        await asyncio.sleep(0.6)
+                        switches = 0
+                        seen = server.ctx.cfg.stream.monitor
+                        mid_a = (a["x"] + a["w"] // 2, a["y"] + a["h"] // 2)
+                        mid_b = (b["x"] + b["w"] // 2, b["y"] + b["h"] // 2)
+                        started = time.monotonic()
+                        while time.monotonic() - started < 6.0:
+                            # Hop straight between the middles of the two
+                            # screens - the worst case the old code had.
+                            for target in (mid_b, mid_a):
+                                wi.move_to(*target)
+                                await ws.send_json({"t": "mouse", "a": "moveby",
+                                                    "dx": 1, "dy": 0})
+                                await asyncio.sleep(0.25)
+                                if server.ctx.cfg.stream.monitor != seen:
+                                    seen = server.ctx.cfg.stream.monitor
+                                    switches += 1
+                        check("the screen boundary does not thrash", switches <= 3,
+                              f"{switches} switches in 6s of crossing back and forth")
+                        await ws.send_json({"t": "view", "on": True,
+                                            "monitor": a["index"], "follow": False})
+                        await asyncio.sleep(0.4)
+                    else:
+                        check("multi-screen behaviour", None, "no second screen")
+
+                    # -- very small movements must not get lost
+                    wi.move_to(mons[0]["x"] + 600, mons[0]["y"] + 400)
+                    await asyncio.sleep(0.15)
+                    bx, by = wi.cursor_pos()
+                    for _ in range(20):
+                        await ws.send_json({"t": "mouse", "a": "moveby", "dx": 0.3, "dy": 0})
+                        await asyncio.sleep(0.03)
+                    await asyncio.sleep(0.2)
+                    ax, _ay = wi.cursor_pos()
+                    check("slow movement is not lost", abs((ax - bx) - 6) <= 2,
+                          f"expected 20 x 0.3px = 6px, got {ax - bx}px")
 
                 # -- errors
                 async def next_error():
@@ -523,6 +619,9 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
             # -- connecting a phone as a source (control the other way)
             await test_phone_source(sess, base, sslctx, cfg)
 
+            # -- standing aside for a game
+            await test_pause(sess, base, sslctx, cfg, server)
+
             # -- dictation
             await test_dictation(sess, base, sslctx, cfg, caps)
 
@@ -533,6 +632,68 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                       "monitors" not in info and "name" in info, str(info)[:70])
     finally:
         await server.stop()
+
+
+# --------------------------------------------- 7. standing aside for a game
+
+
+async def test_pause(sess, base, sslctx, cfg, server) -> None:
+    """The picture stands aside for a program named in pause_for.
+
+    Capturing and encoding a screen costs GPU time a game wanted, so
+    while one of those programs runs the picture stops - but only the
+    picture. The connection and the controls have to keep working, or
+    pausing would be indistinguishable from a crash.
+
+    python.exe stands in for the game here: this test is running under
+    it, so it is certainly there.
+    """
+    section("7. Standing aside for a game")
+
+    from pult.platform import input_backend
+
+    saved_list = list(cfg.stream.pause_for)
+    cfg.stream.pause_for = ["python.exe"]
+    try:
+        async with sess.ws_connect(f"{base}/ws?k={cfg.token}", ssl=sslctx) as ws:
+            await ws.receive()
+            await ws.send_json({"t": "view", "on": True})
+
+            told = None
+            end = time.monotonic() + 12
+            while time.monotonic() < end and told is None:
+                try:
+                    m = await asyncio.wait_for(ws.receive(), timeout=3)
+                except asyncio.TimeoutError:
+                    continue
+                if m.type == aiohttp.WSMsgType.TEXT:
+                    d = json.loads(m.data)
+                    if d.get("t") == "blocked":
+                        told = d
+            check("the viewer is told why", bool(told and told.get("reason") == "busy"),
+                  (told or {}).get("msg", "").split("\n")[0])
+            check("capture is stopped", not server.ctx.capture.running,
+                  "no GPU time spent on the picture")
+
+            # The whole point of pausing only the picture.
+            wi = input_backend()
+            mon = wi.list_monitors()[0]
+            was = wi.cursor_pos()
+            await ws.send_json({"t": "mouse", "a": "move", "x": 0.5, "y": 0.5})
+            await asyncio.sleep(0.4)
+            gx, gy = wi.cursor_pos()
+            check("the mouse still works", abs(gx - (mon["x"] + mon["w"] // 2)) < 40,
+                  f"cursor ({gx},{gy})")
+            wi.move_to(*was)
+
+            cfg.stream.pause_for = ["no-such-program-exists.exe"]
+            await server.ctx.check_pause()
+            await asyncio.sleep(0.4)
+            check("it resumes when the program closes",
+                  server.ctx.capture.running, "capture is back")
+    finally:
+        cfg.stream.pause_for = saved_list
+        await server.ctx.check_pause()
 
 
 # ------------------------------------------------------- 6. dictation
@@ -702,6 +863,18 @@ async def main() -> int:
     print("Pult - self-test")
     print("Keep off the mouse: the test moves the cursor to measure accuracy.")
     print(f"Temporary settings: {_TMP}")
+
+    # A game changes the answer to almost every question below: it holds
+    # the mouse, so pointer movements go nowhere or land somewhere else,
+    # and it has the GPU, so capture cannot get a frame out in time.
+    # The results are then about the game, not about Pult - worth
+    # saying plainly rather than letting them read as faults.
+    busy = _busy_program()
+    if busy:
+        print()
+        print(f"  WARNING: {busy} is running.")
+        print("  It holds the mouse and the GPU, so the pointer and capture")
+        print("  checks below cannot be trusted. Close it for a real result.")
 
     caps = test_environment()
     if caps is None:

@@ -86,6 +86,15 @@ class StreamSettings:
     # always stays visible. When off, the cursor cannot leave the
     # screen being watched.
     follow_cursor: bool = True
+    # Programs that screen sharing should get out of the way of, by
+    # executable name (case does not matter), e.g. ["cs2.exe"].
+    #
+    # Capturing and encoding a screen costs real GPU time, and on a
+    # machine with one graphics card that is time a game wanted. While
+    # one of these is running the picture is paused - the connection,
+    # the keyboard and the mouse all keep working, and the picture comes
+    # back on its own when the program exits.
+    pause_for: list[str] = field(default_factory=list)
 
 
 @dataclass

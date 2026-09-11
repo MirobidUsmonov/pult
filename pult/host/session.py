@@ -333,9 +333,12 @@ class ControllerSession:
             # Someone joining while the screen is already out of reach
             # gets told straight away, rather than waiting out a
             # timeout to learn nothing.
+            if self.ctx.paused_by:
+                await self.send_json(self.ctx.blocked_message("busy"))
+                return
             if self.ctx.capture.blocked:
-                await self.send_json({"t": "blocked",
-                                      "reason": self.ctx.capture.blocked})
+                await self.send_json(
+                    self.ctx.blocked_message(self.ctx.capture.blocked))
                 return
             await self.send_json(self.ctx.stream_message())
             await self.send_catch_up()
@@ -484,6 +487,10 @@ class HostContext:
         self._cross_since = 0.0
         self._switched_at = 0.0
         self._follow_task: asyncio.Task | None = None
+
+        # The program screen sharing is currently standing aside for,
+        # from cfg.stream.pause_for. Empty when nothing is in the way.
+        self.paused_by = ""
 
         # Built on first use: loading the speech model costs both time
         # and several hundred megabytes, and most sessions never dictate.
@@ -834,8 +841,12 @@ class HostContext:
 
         With nobody looking, ffmpeg does not run at all - that is why the
         program costs nothing while the computer sits idle.
+
+        A program named in pause_for counts the same as nobody looking:
+        capturing and encoding a screen costs GPU time that a game
+        wanted, so the picture stands aside for it.
         """
-        want = bool(self.viewers_of("local"))
+        want = bool(self.viewers_of("local")) and not self.paused_by
         if want and not self.capture.running:
             await self.capture.start(self._capture_config())
         elif want and changed:
@@ -851,6 +862,39 @@ class HostContext:
         """The codec is known - tell the watchers at once."""
         asyncio.create_task(self._send_stream(), name="pult-codec")
 
+    async def check_pause(self) -> None:
+        """Stands aside while a program from pause_for is running.
+
+        Asked on a timer rather than hooked into anything: there is no
+        reliable notification when a game starts, and a look at the
+        process table costs a few milliseconds.
+        """
+        names = self.cfg.stream.pause_for
+        found = ""
+        if names and self._system is not None:
+            try:
+                found = self._system.first_running(names)
+            except Exception:
+                log.debug("could not read the process list", exc_info=True)
+                return
+
+        if found == self.paused_by:
+            return
+
+        self.paused_by = found
+        if found:
+            log.info("%s is running - pausing the picture so it is not slowed "
+                     "down", found)
+        else:
+            log.info("the program that was in the way has closed - resuming")
+        await self.sync_capture()
+        await self._send_blocked("busy" if found else "")
+        if not found:
+            # Back from a pause: the viewers were left with a message
+            # instead of a picture, so they need the stream details
+            # again before any frame can be decoded.
+            asyncio.create_task(self._announce_stream(), name="pult-resume")
+
     def _capture_blocked(self, reason: str) -> None:
         """The system will not let us capture - say so, and say when it will.
 
@@ -859,8 +903,29 @@ class HostContext:
         """
         asyncio.create_task(self._send_blocked(reason), name="pult-blocked")
 
+    def blocked_message(self, reason: str) -> dict:
+        """Why there is no picture, in words the phone can simply show.
+
+        Written here rather than on the phone because the reason is
+        something only this side knows - which program is in the way,
+        and whether it will clear by itself.
+        """
+        if reason == "locked":
+            text = ("The computer is locked.\n"
+                    "Windows does not allow the lock screen to be shared — "
+                    "unlock the computer and the picture comes back by itself.")
+        elif reason == "busy":
+            name = self.paused_by or "a program"
+            text = (f"{name} is running.\n"
+                    "The picture is paused so the program is not slowed down. "
+                    "The keyboard and mouse still work, and the picture comes "
+                    "back when it closes.")
+        else:
+            text = ""
+        return {"t": "blocked", "reason": reason, "msg": text}
+
     async def _send_blocked(self, reason: str) -> None:
-        msg = {"t": "blocked", "reason": reason}
+        msg = self.blocked_message(reason)
         for s in list(self.sessions):
             if not s.viewing or s.source_id != "local":
                 continue
@@ -898,11 +963,22 @@ class HostContext:
             s.offer_unit(au, key, ts)
 
     async def _stats_loop(self) -> None:
+        ticks = 0
         try:
             while True:
                 await asyncio.sleep(1.0)
                 if not self.sessions:
                     continue
+
+                # Every few ticks rather than every one: reading the
+                # process table is cheap but not free, and a game does
+                # not start twice a second.
+                ticks += 1
+                if ticks % 3 == 0 and self.cfg.stream.pause_for:
+                    try:
+                        await self.check_pause()
+                    except Exception:
+                        log.debug("the pause check failed", exc_info=True)
 
                 msg = {
                     "t": "stats",

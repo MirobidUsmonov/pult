@@ -374,12 +374,9 @@ link.onJson = (msg) => {
      * reconnect. */
     if (msg.reason) {
       canvas.classList.add("hidden");
-      setPlaceholder(
-        "The computer is locked.\n" +
-        "Windows does not allow the lock screen to be shared — unlock the " +
-        "computer and the picture comes back by itself.",
-        null
-      );
+      // The text comes from the computer: only that side knows what is
+      // in the way and whether it will clear by itself.
+      setPlaceholder(msg.msg || "The screen cannot be shared right now.", null);
     } else {
       setPlaceholder("Waiting for the screen…");
     }
