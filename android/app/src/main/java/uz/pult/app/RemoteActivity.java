@@ -118,7 +118,38 @@ public class RemoteActivity extends Activity {
             WebView.setWebContentsDebuggingEnabled(true);
         }
 
-        web.setWebChromeClient(new WebChromeClient());
+        web.setWebChromeClient(new WebChromeClient() {
+            /**
+             * The page asks for the microphone, for dictation.
+             *
+             * A WebView refuses every such request unless the app
+             * answers it, so without this the microphone button on the
+             * page would simply do nothing. Only the microphone is ever
+             * granted, and only after Android has asked the user for
+             * it - anything else the page might ask for is refused.
+             */
+            @Override
+            public void onPermissionRequest(final android.webkit.PermissionRequest request) {
+                runOnUiThread(() -> {
+                    for (String res : request.getResources()) {
+                        if (!android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(res)) {
+                            continue;
+                        }
+                        if (hasMicPermission()) {
+                            request.grant(new String[]{res});
+                        } else {
+                            // Asked for now; the page will ask again on
+                            // the next press, by which time the answer
+                            // is known.
+                            pendingMic = request;
+                            askForMic();
+                        }
+                        return;
+                    }
+                    request.deny();
+                });
+            }
+        });
         web.setWebViewClient(new WebViewClient() {
 
             @Override
@@ -212,6 +243,43 @@ public class RemoteActivity extends Activity {
                     finish();
                 })
                 .show();
+    }
+
+    // -- microphone ----------------------------------------------------------
+
+    private static final int REQ_MIC = 71;
+    private android.webkit.PermissionRequest pendingMic;
+
+    private boolean hasMicPermission() {
+        return checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void askForMic() {
+        requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO}, REQ_MIC);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        super.onRequestPermissionsResult(code, perms, results);
+        if (code != REQ_MIC) return;
+        boolean granted = results.length > 0
+                && results[0] == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        if (pendingMic != null) {
+            // The page is still waiting on this one, so answer it
+            // rather than leaving the request hanging.
+            if (granted) {
+                pendingMic.grant(new String[]{
+                        android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE});
+            } else {
+                pendingMic.deny();
+            }
+            pendingMic = null;
+        }
+        if (!granted) {
+            Toast.makeText(this, "Without the microphone there is no dictation",
+                    Toast.LENGTH_LONG).show();
+        }
     }
 
     private void showStatus(String text) {

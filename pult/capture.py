@@ -184,6 +184,18 @@ class ScreenCapture:
         # gets the right message.
         self.on_codec = None
 
+        # Why there is no picture, when the reason is that the system
+        # will not give us one. Empty while all is well.
+        #
+        # Without this the viewer sat in front of a black screen with no
+        # explanation: the computer was locked, both capture methods
+        # were refused, and nothing said so. A black screen that means
+        # "wait" and a black screen that means "this cannot work until
+        # you unlock" look identical, and only one of them is worth
+        # waiting through.
+        self.blocked = ""
+        self.on_blocked = None
+
         # The codec string is only known once the first key frame
         # arrives (it is read out of the SPS). Told any earlier, the
         # browser cannot configure its decoder - hence a separate flag
@@ -354,9 +366,35 @@ class ScreenCapture:
         await asyncio.sleep(2.5)
         if self.stats.bytes_out or self._no_dda or self._proc is None:
             return
-        log.warning("ddagrab gave no frame in 2.5s - falling back to gdigrab "
-                    "(the desktop may simply be still)")
-        self._no_dda = True
+        if not self.blocked:
+            log.warning("ddagrab gave no frame in 2.5s - falling back to gdigrab "
+                        "(the desktop may simply be still)")
+            self._no_dda = True
+            async with self._lock:
+                if self._proc is not None:
+                    await self._kill()
+                    await self._spawn()
+
+        # Still nothing, and the reason is that we are not allowed to
+        # look.
+        #
+        # Windows refuses to let anything capture the sign-in screen, so
+        # while the computer is locked both methods fail and there is
+        # nothing to send. That ends on its own the moment someone
+        # unlocks, and the viewer should not have to reconnect for the
+        # picture to come back - so capture is started again after a
+        # pause.
+        #
+        # Exactly one retry is started here and then this task ends:
+        # _spawn() brings up a fresh watchdog which takes the next turn,
+        # so the cycle continues without two of them running at once.
+        await asyncio.sleep(4.0)
+        if self.stats.bytes_out or self._proc is None or not self.blocked:
+            return
+        log.info("capture is being refused (%s) - trying again", self.blocked)
+        # Both methods deserve another go: which one is refused depends
+        # on why, and the reason may have changed in the meantime.
+        self._no_dda = False
         async with self._lock:
             if self._proc is not None:
                 await self._kill()
@@ -412,6 +450,16 @@ class ScreenCapture:
                         # A cap so the buffer cannot grow without bound
                         if len(self._gop) < self.cfg.fps * 4:
                             self._gop.append(au)
+                    if self.blocked:
+                        # A frame arrived, so whatever was in the way is
+                        # gone - the viewer should hear that too.
+                        self.blocked = ""
+                        log.info("screen capture is allowed again")
+                        if self.on_blocked:
+                            try:
+                                self.on_blocked("")
+                            except Exception:
+                                log.debug("the notice was not delivered", exc_info=True)
                     self.stats.note(len(au), key)
                     res = self.on_unit(au, key)
                     if asyncio.iscoroutine(res):
@@ -424,6 +472,38 @@ class ScreenCapture:
             if self._proc and self._proc.returncode not in (None, 0):
                 log.error("ffmpeg exited (code %s): %s",
                           self._proc.returncode, " | ".join(self._stderr_tail[-5:]))
+
+    def _note_refusal(self, text: str) -> None:
+        """Recognises "you are not allowed to capture" in ffmpeg's output.
+
+        Windows says it in several ways depending on which method was
+        tried - the duplication API refuses outright, GDI returns a bare
+        error 5 - so the phrases are matched rather than the exit code,
+        which is the same for every kind of failure.
+
+        Nearly always this means the computer is locked.
+        """
+        low = text.lower()
+        signs = (
+            "desktop duplication access denied",
+            "operation not permitted",
+            "failed to capture image (error 5)",
+            "acquirenextframe failed: 887a0026",   # DXGI_ERROR_ACCESS_LOST
+        )
+        if not any(s in low for s in signs):
+            return
+
+        reason = "locked"
+        if reason == self.blocked:
+            return
+        self.blocked = reason
+        log.warning("the system is refusing screen capture - the computer "
+                    "is most likely locked")
+        if self.on_blocked:
+            try:
+                self.on_blocked(reason)
+            except Exception:
+                log.debug("the blocked notice was not delivered", exc_info=True)
 
     async def _read_stderr(self) -> None:
         assert self._proc and self._proc.stderr
@@ -438,6 +518,7 @@ class ScreenCapture:
                     self._stderr_tail.append(text)
                     del self._stderr_tail[:-20]
                     log.warning("ffmpeg: %s", text)
+                    self._note_refusal(text)
         except asyncio.CancelledError:
             raise
         except Exception:

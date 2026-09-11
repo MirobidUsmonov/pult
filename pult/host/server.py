@@ -23,6 +23,12 @@ from .session import ControllerSession, HostContext
 
 log = logging.getLogger("pult.server")
 
+# The largest recording accepted for dictation. Speech at the bitrate the
+# phone is asked to use runs about 3 KB a second, so this is roughly
+# twenty minutes - far beyond anything anyone dictates in one breath, and
+# small enough that a recorder left running cannot exhaust memory.
+STT_MAX_BYTES = 4 * 1024 * 1024
+
 
 def web_root() -> Path:
     """The web assets folder, found in a built .exe as well."""
@@ -49,7 +55,17 @@ class HostServer:
     def __init__(self, cfg: Config, caps: ff.Capabilities) -> None:
         self.cfg = cfg
         self.ctx = HostContext(cfg, caps)
-        self.app = web.Application(middlewares=[self._no_cache])
+        # aiohttp refuses bodies over 1 MB by default, which a dictated
+        # sentence can exceed on a phone that records at a high bitrate.
+        # The real limit is enforced in the handler, where it can answer
+        # with a readable message instead of a bare 413.
+        # Left at the default, aiohttp cuts bodies off at 1 MB with a
+        # bare 413, which a dictated sentence can exceed on a phone that
+        # records at a high bitrate. The headroom is deliberate: the
+        # real limit lives in the handler, where it can answer with a
+        # readable message, and this only stops something absurd.
+        self.app = web.Application(middlewares=[self._no_cache],
+                                   client_max_size=STT_MAX_BYTES * 2)
         self._runner: web.AppRunner | None = None
         self._setup_routes()
 
@@ -77,6 +93,7 @@ class HostServer:
         self.app.router.add_get("/pair", self.pair_handler)
         self.app.router.add_post("/api/pair/send", self.pair_send_handler)
         self.app.router.add_get("/api/pair", self.pair_json_handler)
+        self.app.router.add_post("/api/stt", self.stt_handler)
         self.app.router.add_get("/", self.index_handler)
         if root.is_dir():
             self.app.router.add_static("/", root, show_index=False)
@@ -180,6 +197,50 @@ class HostServer:
                 "Content-Disposition": 'attachment; filename="pult.crt"',
             },
         )
+
+    async def stt_handler(self, request: web.Request) -> web.StreamResponse:
+        """Turns a recording from the phone into text.
+
+        Typing on a phone to drive a computer is the slowest part of
+        using it, so the phone records a few seconds of speech and this
+        hands back the words. Recognition runs on this computer and the
+        audio is never sent anywhere else.
+
+        A plain POST rather than a WebSocket message: this is one
+        request with one answer, it carries a payload far larger than
+        any control message, and it must not sit in the same queue as
+        the video frames.
+        """
+        if not _authorized(request, self.cfg.token):
+            return web.json_response({"ok": False, "msg": "wrong key"}, status=401)
+
+        from .. import stt as sttmod
+
+        if not sttmod.available(self.cfg):
+            return web.json_response(
+                {"ok": False, "msg": "dictation is not set up on this computer"})
+
+        # A cap on the upload: a few seconds of speech is well under a
+        # megabyte, and without a limit a stuck recorder could send
+        # until memory runs out.
+        audio = await request.read()
+        if len(audio) > STT_MAX_BYTES:
+            return web.json_response({"ok": False, "msg": "the recording is too long"})
+        if not audio:
+            return web.json_response({"ok": False, "msg": "no audio arrived"})
+
+        try:
+            # Both steps block - ffmpeg and then the model - so they run
+            # off the event loop, or the video stream would stutter for
+            # everyone else while someone dictates.
+            samples = await asyncio.to_thread(
+                sttmod.to_samples, audio, self.ctx.caps.path)
+            text = await asyncio.to_thread(self.ctx.recogniser().transcribe, samples)
+        except Exception as exc:
+            log.warning("dictation failed: %s", exc, exc_info=True)
+            return web.json_response({"ok": False, "msg": str(exc)})
+
+        return web.json_response({"ok": True, "text": text})
 
     async def info_handler(self, request: web.Request) -> web.StreamResponse:
         """A short summary. Without a key only the name is visible.

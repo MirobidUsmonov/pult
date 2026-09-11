@@ -37,6 +37,14 @@ MAX_QUEUED_FRAMES = 60
 # from a controller that is watching some other source.
 FORWARDED = {"mouse", "scroll", "key", "combo", "text", "release_keys", "cmd"}
 
+# How the view follows the cursor between screens. Rebuilding the stream
+# costs about a second of black picture, so these are deliberately
+# unhurried - see HostContext.follow_cursor for what went wrong when they
+# were not.
+SWITCH_DWELL = 0.8        # seconds the cursor must stay on the other screen
+SWITCH_COOLDOWN = 3.0     # seconds before another switch is considered
+EDGE_MARGIN = 80          # pixels clear of the edge before it counts
+
 
 def pack_video(au: bytes, key: bool, ts_ms: int) -> bytes:
     return _BIN_HEADER.pack(BIN_VIDEO, 1 if key else 0, 0, ts_ms & 0xFFFFFFFF) + au
@@ -322,6 +330,13 @@ class ControllerSession:
             # its decoder from exactly that string, and frames sent
             # before it are wasted.
             await self.ctx.capture.wait_codec()
+            # Someone joining while the screen is already out of reach
+            # gets told straight away, rather than waiting out a
+            # timeout to learn nothing.
+            if self.ctx.capture.blocked:
+                await self.send_json({"t": "blocked",
+                                      "reason": self.ctx.capture.blocked})
+                return
             await self.send_json(self.ctx.stream_message())
             await self.send_catch_up()
 
@@ -464,8 +479,14 @@ class HostContext:
         # message went out with an empty codec and was never updated
         # again - the viewer sat on "Waiting for the screen" forever.
         self.capture.on_codec = self._codec_ready
+        self.capture.on_blocked = self._capture_blocked
         self._stats_task: asyncio.Task | None = None
         self._cross_since = 0.0
+        self._switched_at = 0.0
+
+        # Built on first use: loading the speech model costs both time
+        # and several hundred megabytes, and most sessions never dictate.
+        self._recogniser = None
 
         self._system = None
         if system_name() == "Windows":
@@ -583,22 +604,57 @@ class HostContext:
     async def follow_cursor(self) -> None:
         """Moves the view along when the cursor crosses to another screen.
 
-        With a delay: wandering back and forth over the boundary must not
-        restart the stream over and over - every restart costs about half
-        a second of black.
+        Switching is expensive: it tears down ffmpeg and the hardware
+        encoder and builds them again, which costs about a second of
+        black picture and a burst of GPU work. Doing it on every crossing
+        of the boundary was worse than not following at all - in one
+        recorded session the cursor sat near the edge and capture
+        restarted forty times in two minutes, which stuttered everything
+        else on the machine, games included.
+
+        So a crossing has to look deliberate before it is acted on:
+
+        - the cursor must stay on the other screen for a full second,
+          not a third of one, which is longer than any pass through on
+          the way somewhere else;
+        - it must be properly inside that screen rather than hugging the
+          line, so a cursor resting on the boundary cannot flip back and
+          forth between two readings;
+        - and after a switch there is a pause before the next one, so
+          even deliberate crossings cannot queue up faster than the
+          stream can be rebuilt.
         """
+        now = time.monotonic()
+        if now - self._switched_at < SWITCH_COOLDOWN:
+            self._cross_since = 0.0
+            return
+
         x, y = self.input.cursor_pos()
         idx = self.monitor_at(x, y)
         if idx is None or idx == self.cfg.stream.monitor:
             self._cross_since = 0.0
             return
-        now = time.monotonic()
+
+        # Well inside, not merely across. Without this a cursor sitting
+        # on the seam between two screens reads as first one and then the
+        # other as it trembles by a single pixel.
+        mon = next((m for m in self.monitors if m["index"] == idx), None)
+        if mon is None:
+            return
+        margin = min(EDGE_MARGIN, mon["w"] // 4, mon["h"] // 4)
+        if not (mon["x"] + margin <= x < mon["x"] + mon["w"] - margin
+                and mon["y"] + margin <= y < mon["y"] + mon["h"] - margin):
+            self._cross_since = 0.0
+            return
+
         if not self._cross_since:
             self._cross_since = now
             return
-        if now - self._cross_since < 0.35:
+        if now - self._cross_since < SWITCH_DWELL:
             return
+
         self._cross_since = 0.0
+        self._switched_at = now
         self.cfg.stream.monitor = idx
         log.info("cursor moved to screen %d, the view followed", idx + 1)
         await self.sync_capture(changed=True)
@@ -668,6 +724,11 @@ class HostContext:
                 # address is new on every start, so it has to be
                 # restated on every connection.
                 "addresses": self.addresses(),
+                # Whether speaking instead of typing is possible here.
+                # The phone hides the microphone button when it is not,
+                # because a button that always answers "not set up" is
+                # worse than no button.
+                "stt": self.stt_available(),
             },
             "sources": self.sources_list(),
             "stream": {
@@ -767,6 +828,24 @@ class HostContext:
         """The codec is known - tell the watchers at once."""
         asyncio.create_task(self._send_stream(), name="pult-codec")
 
+    def _capture_blocked(self, reason: str) -> None:
+        """The system will not let us capture - say so, and say when it will.
+
+        Called from the capture thread's callback, so the sending is
+        handed to the loop rather than done here.
+        """
+        asyncio.create_task(self._send_blocked(reason), name="pult-blocked")
+
+    async def _send_blocked(self, reason: str) -> None:
+        msg = {"t": "blocked", "reason": reason}
+        for s in list(self.sessions):
+            if not s.viewing or s.source_id != "local":
+                continue
+            try:
+                await s.send_json(msg)
+            except Exception:
+                pass
+
     async def _send_stream(self) -> None:
         msg = self.stream_message()
         for s in list(self.sessions):
@@ -801,6 +880,18 @@ class HostContext:
                 await asyncio.sleep(1.0)
                 if not self.sessions:
                     continue
+
+                # The view follows the cursor from here as well as from
+                # the mouse messages themselves. Checking only on those
+                # meant that crossing to the other screen and stopping
+                # never switched anything: the dwell has to elapse, and
+                # with the mouse at rest nothing was left to notice that
+                # it had.
+                if self.cfg.stream.follow_cursor and self.viewers_of("local"):
+                    try:
+                        await self.follow_cursor()
+                    except Exception:
+                        log.debug("following the cursor failed", exc_info=True)
                 msg = {
                     "t": "stats",
                     "fps": round(self.capture.stats.fps, 1),
@@ -816,6 +907,21 @@ class HostContext:
                         pass
         except asyncio.CancelledError:
             raise
+
+    # -- dictation ---------------------------------------------------------
+
+    def recogniser(self):
+        """The speech recogniser, built the first time it is wanted."""
+        if self._recogniser is None:
+            from .. import stt as sttmod
+
+            self._recogniser = sttmod.Recogniser(self.cfg)
+        return self._recogniser
+
+    def stt_available(self) -> bool:
+        from .. import stt as sttmod
+
+        return sttmod.available(self.cfg)
 
     # -- commands ----------------------------------------------------------
 

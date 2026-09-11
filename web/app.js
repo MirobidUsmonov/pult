@@ -325,6 +325,10 @@ link.onJson = (msg) => {
     buildSources();
     updateHostLabel();
     buildCommands(host.commands || []);
+    // The microphone needs both sides: a model on the computer and a
+    // recorder in this browser. Missing either, the button stays away
+    // rather than failing when pressed.
+    if (mic) mic.hidden = !(host.stt && micSupported());
     applyPrefsToUi();
     if (!decoder.supported) {
       setPlaceholder(
@@ -362,6 +366,23 @@ link.onJson = (msg) => {
     $("stats").textContent = streaming
       ? `${msg.fps} fps · ${fmtRate(msg.kbps)}` : "";
     $("infoRtt").textContent = link.rtt ? `${link.rtt} ms` : "—";
+  } else if (msg.t === "blocked") {
+    /* Windows will not let anything capture the sign-in screen, so
+     * while the computer is locked there is genuinely nothing to send.
+     * Saying so beats a black screen that looks identical to a slow
+     * connection - and it comes back by itself, so nobody needs to
+     * reconnect. */
+    if (msg.reason) {
+      canvas.classList.add("hidden");
+      setPlaceholder(
+        "The computer is locked.\n" +
+        "Windows does not allow the lock screen to be shared — unlock the " +
+        "computer and the picture comes back by itself.",
+        null
+      );
+    } else {
+      setPlaceholder("Waiting for the screen…");
+    }
   } else if (msg.t === "error") {
     toast(msg.msg);
   } else if (msg.t === "cmd_ok") {
@@ -1593,6 +1614,110 @@ $("btnForget").onclick = () => {
 };
 
 $("phBtn").onclick = () => startStream();
+
+/* ----------------------------------------------------------- dictation */
+
+/* Hold the microphone, speak, let go.
+ *
+ * Hold-to-talk rather than tap-to-start: it needs no second decision
+ * about when speech ended, it cannot be left recording by accident, and
+ * it matches how a walkie-talkie already works.
+ *
+ * The recording goes to the computer, which recognises it locally and
+ * sends the words back. They land in the text field rather than being
+ * typed straight through, because recognition is never perfect and
+ * fixing a word before it lands beats fixing it afterwards on the far
+ * side. */
+const mic = $("btnMic");
+let recorder = null;
+let chunks = [];
+let micBusy = false;
+
+function micSupported() {
+  return !!(navigator.mediaDevices && window.MediaRecorder);
+}
+
+async function micStart() {
+  if (recorder || micBusy || !micSupported()) return;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+  } catch (e) {
+    toast(e && e.name === "NotAllowedError"
+      ? "Microphone access was refused"
+      : "No microphone found");
+    return;
+  }
+  chunks = [];
+  // Speech carries fine at this bitrate, and the upload matters: over a
+  // tunnel the recording has to cross the internet before a single word
+  // comes back. Opus if the browser has it, otherwise its own default.
+  const opts = { audioBitsPerSecond: 24000 };
+  if (MediaRecorder.isTypeSupported?.("audio/webm;codecs=opus")) {
+    opts.mimeType = "audio/webm;codecs=opus";
+  }
+  recorder = new MediaRecorder(stream, opts);
+  recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => {
+    // The tracks are stopped explicitly: left running, the phone keeps
+    // showing its "microphone in use" indicator afterwards.
+    stream.getTracks().forEach((t) => t.stop());
+    send(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
+    recorder = null;
+  };
+  recorder.start();
+  mic.classList.add("on");
+  navigator.vibrate?.(12);
+
+  async function send(blob) {
+    // Under a moment of audio is a mis-tap, not speech.
+    if (blob.size < 2000) { mic.classList.remove("on"); return; }
+    micBusy = true;
+    mic.classList.remove("on");
+    mic.classList.add("busy");
+    try {
+      const r = await fetch(`/api/stt?k=${encodeURIComponent(link.token)}`,
+                            { method: "POST", body: blob });
+      const d = await r.json();
+      if (!d.ok) {
+        toast(d.msg || "Could not recognise that");
+      } else if (!d.text) {
+        toast("Nothing was heard");
+      } else {
+        // Appended rather than replacing, so several goes build up one
+        // sentence and anything already typed survives.
+        typer.value = (typer.value ? typer.value.trimEnd() + " " : "") + d.text;
+        typer.focus();
+        navigator.vibrate?.(8);
+      }
+    } catch (e) {
+      toast("The computer did not answer");
+    }
+    mic.classList.remove("busy");
+    micBusy = false;
+  }
+}
+
+function micStop() {
+  if (recorder && recorder.state !== "inactive") recorder.stop();
+  mic.classList.remove("on");
+}
+
+if (mic) {
+  mic.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    // Keeps the events coming even if the finger slides off the button.
+    mic.setPointerCapture?.(e.pointerId);
+    micStart();
+  });
+  for (const ev of ["pointerup", "pointercancel", "pointerleave"]) {
+    mic.addEventListener(ev, (e) => { e.preventDefault(); micStop(); });
+  }
+  // A held button otherwise raises the system's own long-press menu.
+  mic.addEventListener("contextmenu", (e) => e.preventDefault());
+}
 
 /* ------------------------------------------------------------ lifecycle */
 

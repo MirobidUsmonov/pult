@@ -56,6 +56,8 @@ On an NVIDIA GTX 1650 capturing 1080p at 30 fps, the agent uses about **3% CPU**
   drag, right-click, middle-click, back/forward buttons
 - **Any keyboard layout** — text is injected as Unicode, so Uzbek, Russian,
   emoji all work regardless of the layout set on the PC
+- **Dictation** — hold the microphone and speak instead of typing; recognition
+  runs on your own PC through whisper.cpp and the audio never leaves it
 - **System commands** — lock, sleep, shut down, turn the display off, launch
   a program
 - **Hardware encoder auto-detection** — NVENC → Quick Sync → AMF → Media
@@ -154,6 +156,36 @@ holding and it becomes a drag.
 - Python 3.10+
 - [ffmpeg](https://ffmpeg.org/download.html) on `PATH`
 - A phone with Chrome (Android) or Safari on iOS 17+
+- Optional, for dictation: a whisper.cpp build and a model (see below)
+
+## Dictation
+
+Typing on a phone to drive a computer is the slowest part of using it, so
+the text field has a microphone next to it: hold it, speak, let go. The
+recording goes to your PC, is recognised there, and the words land in the
+field for you to check before they are sent.
+
+Recognition runs entirely on your own machine — the audio is not uploaded
+anywhere. Pult does not ship a model; it uses one already installed. If you
+have [Kotib](https://github.com/mirqobilov/kotib) (offline Uzbek dictation)
+it is found automatically, along with its `libwhisper.dll` and Uzbek model.
+Any whisper.cpp build and `ggml-*.bin` model will do:
+
+```json
+"stt": {
+  "enabled": true,
+  "library": "C:/path/to/libwhisper.dll",
+  "model": "C:/path/to/ggml-model.bin",
+  "language": "uz",
+  "idle_unload_minutes": 10
+}
+```
+
+The model is loaded on first use and released again once it has been idle,
+so it does not hold several hundred megabytes all day. On a GTX 1650 a
+phrase comes back in about a second, whatever its length.
+
+Without a model the microphone button simply does not appear.
 
 ## Install
 

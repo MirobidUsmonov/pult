@@ -414,6 +414,39 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                     check("switching screens moves the cursor", moved, f"cursor ({gx},{gy})")
                     await ws.send_json({"t": "view", "on": True, "monitor": a["index"]})
                     await asyncio.sleep(0.5)
+
+                    # -- the boundary must not be able to thrash
+                    #
+                    # Following the cursor once restarted capture on
+                    # every crossing: a cursor resting near the seam
+                    # rebuilt ffmpeg and the encoder dozens of times a
+                    # minute, which stuttered everything else on the
+                    # machine. A crossing now has to be deliberate, and
+                    # there is a pause before the next one.
+                    await ws.send_json({"t": "view", "on": True,
+                                        "monitor": a["index"], "follow": True})
+                    await asyncio.sleep(0.6)
+                    switches = 0
+                    seen = server.ctx.cfg.stream.monitor
+                    mid_a = (a["x"] + a["w"] // 2, a["y"] + a["h"] // 2)
+                    mid_b = (b["x"] + b["w"] // 2, b["y"] + b["h"] // 2)
+                    started = time.monotonic()
+                    while time.monotonic() - started < 6.0:
+                        # Hop straight between the middles of the two
+                        # screens - the worst case the old code had.
+                        for target in (mid_b, mid_a):
+                            wi.move_to(*target)
+                            await ws.send_json({"t": "mouse", "a": "moveby",
+                                                "dx": 1, "dy": 0})
+                            await asyncio.sleep(0.25)
+                            if server.ctx.cfg.stream.monitor != seen:
+                                seen = server.ctx.cfg.stream.monitor
+                                switches += 1
+                    check("the screen boundary does not thrash", switches <= 3,
+                          f"{switches} switches in 6s of crossing back and forth")
+                    await ws.send_json({"t": "view", "on": True,
+                                        "monitor": a["index"], "follow": False})
+                    await asyncio.sleep(0.4)
                 else:
                     check("multi-screen behaviour", None, "no second screen")
 
@@ -456,6 +489,9 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
             # -- connecting a phone as a source (control the other way)
             await test_phone_source(sess, base, sslctx, cfg)
 
+            # -- dictation
+            await test_dictation(sess, base, sslctx, cfg, caps)
+
             # -- the public info
             async with sess.get(f"{base}/api/info", ssl=sslctx) as r:
                 info = await r.json()
@@ -463,6 +499,59 @@ async def test_protocol(caps: ff.Capabilities, mons: list[dict]) -> None:
                       "monitors" not in info and "name" in info, str(info)[:70])
     finally:
         await server.stop()
+
+
+# ------------------------------------------------------- 6. dictation
+
+
+async def test_dictation(sess, base, sslctx, cfg, caps) -> None:
+    """Speaking instead of typing.
+
+    Skipped entirely when no speech model is installed - that is a
+    normal state, not a failure, and the microphone button stays hidden
+    on the phone in that case.
+    """
+    section("6. Dictation")
+
+    from pult import stt as sttmod
+
+    if not sttmod.available(cfg):
+        check("speech model", None, "not installed - dictation is off")
+        return
+    check("speech model", True, str(sttmod.default_model()))
+
+    url = f"{base}/api/stt?k={cfg.token}"
+
+    async with sess.post(f"{base}/api/stt?k=wrong", data=b"x", ssl=sslctx) as r:
+        check("a wrong key is refused", r.status == 401, f"HTTP {r.status}")
+
+    async with sess.post(url, data=b"this is not audio" * 50, ssl=sslctx) as r:
+        d = await r.json()
+        check("rubbish is rejected cleanly", d.get("ok") is False,
+              (d.get("msg") or "")[:50])
+
+    def clip(spec: str) -> bytes:
+        return subprocess.run(
+            [caps.path, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+             "-i", spec, "-c:a", "libopus", "-b:a", "24k", "-f", "webm", "pipe:1"],
+            capture_output=True).stdout
+
+    # Silence must come back empty. The model does not say "nothing was
+    # said" on its own - given an empty recording it invents a plausible
+    # phrase, and a stray press of the button would otherwise drop a word
+    # nobody spoke into the text.
+    async with sess.post(url, data=clip("anullsrc=r=48000:cl=mono:d=2"), ssl=sslctx) as r:
+        d = await r.json()
+        check("silence produces no words", d.get("ok") and not d.get("text"),
+              repr(d.get("text", "")))
+
+    # A real sound, to prove the whole path runs: decode, model, answer.
+    t0 = time.monotonic()
+    async with sess.post(url, data=clip("sine=frequency=440:duration=3"), ssl=sslctx) as r:
+        d = await r.json()
+        took = time.monotonic() - t0
+        check("audio comes back as text", bool(d.get("ok") and d.get("text")),
+              f"{d.get('text','')!r} in {took:.1f}s")
 
 
 # --------------------------------------------- 5. control the other way

@@ -86,8 +86,14 @@
     <button class="k" data-key="Enter">⏎</button>
   </div>
   <div class="krow" id="fnrow"></div>
-  <input id="typer" type="text" autocomplete="off" autocorrect="off"
-         autocapitalize="off" spellcheck="false" placeholder="type text…">
+  <!-- Typing on a phone to drive a computer is the slowest part of it,
+       so the row ends with a microphone: hold it, speak, let go. -->
+  <div class="typerow">
+    <input id="typer" type="text" autocomplete="off" autocorrect="off"
+           autocapitalize="off" spellcheck="false" placeholder="type text…">
+    <button id="btnMic" class="mic" hidden aria-label="Hold to speak"
+            title="Hold to speak"><svg class="ic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+  </div>
 </div>
 
 <div id="sheet" hidden>

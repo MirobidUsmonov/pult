@@ -155,6 +155,26 @@ class TelegramSettings:
 
 
 @dataclass
+class SttSettings:
+    """Dictation: speaking instead of typing on the phone.
+
+    Off by nothing but the absence of a model - when a whisper.cpp
+    library and a model are found on the computer it simply works, and
+    when they are not the button does not appear.
+
+    Empty paths mean "look in the usual places" (see pult/stt.py).
+    """
+    enabled: bool = True
+    library: str = ""       # libwhisper.dll
+    model: str = ""         # ggml-*.bin
+    language: str = "uz"
+    threads: int = 0        # 0 = pick from the number of cores
+    # The model is large, so it is released again after sitting unused.
+    # 0 keeps it loaded once it has been used.
+    idle_unload_minutes: int = 10
+
+
+@dataclass
 class SecuritySettings:
     # Whether system commands (sleep, shut down, launch a program) are
     # allowed. Anyone who only wants to watch can turn this off.
@@ -189,6 +209,7 @@ class Config:
     hub: HubSettings = field(default_factory=HubSettings)
     telegram: TelegramSettings = field(default_factory=TelegramSettings)
     security: SecuritySettings = field(default_factory=SecuritySettings)
+    stt: SttSettings = field(default_factory=SttSettings)
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2, ensure_ascii=False)
